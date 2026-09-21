@@ -484,6 +484,15 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     return state.data.columns.indexOf(key);
   }
 
+  function windowPhrase() {
+    for (var i = 0; i < RANGES.length; i++) {
+      if (RANGES[i].key === state.range) {
+        return RANGES[i].seconds === null ? "the full record" : RANGES[i].label;
+      }
+    }
+    return "the window";
+  }
+
   function rangeSeconds() {
     for (var i = 0; i < RANGES.length; i++) if (RANGES[i].key === state.range) return RANGES[i].seconds;
     return 7 * DAY;
@@ -912,15 +921,18 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
           foot.appendChild(n);
           var move = document.createElement("span");
           var threshold = Math.pow(10, -def.precision) * 5;
+          var across = " across " + windowPhrase();
           if (Math.abs(stats.change) < threshold) {
             move.className = "trend";
-            move.textContent = "steady";
+            move.textContent = "steady" + across;
           } else {
             move.className = "trend " + (stats.change > 0 ? "up" : "down");
             move.textContent = (stats.change > 0 ? "↑ " : "↓ ") +
               fmt(Math.abs(stats.change), def.precision) +
-              (def.unit ? " " + def.unit : "") + " over window";
+              (def.unit ? " " + def.unit : "") + across;
           }
+          move.title = "Mean of the last tenth of " + windowPhrase() +
+            " minus the mean of the first tenth.";
           foot.appendChild(move);
           panel.appendChild(foot);
         }
