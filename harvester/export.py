@@ -23,6 +23,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from .nutrients import ANALYTE_GROUPS as NUTRIENT_GROUPS
 from .nutrients import ANALYTES as NUTRIENT_ANALYTES
 from .seneye import PARAMETERS
 
@@ -122,7 +123,7 @@ def build_payload(
         for p in active
     ]
 
-    nutrients = _nutrients(store)
+    nutrients = _nutrients(store, config)
 
     last_run = store.query(
         "SELECT started_at, finished_at, status, readings_inserted, message "
@@ -145,7 +146,7 @@ def build_payload(
     }
 
 
-def _nutrients(store) -> dict[str, Any]:
+def _nutrients(store, config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Hand-sampled lab measurements, keyed by sump rather than device.
 
     Every sample is exported: there are a few dozen a year, not thousands, and
@@ -159,11 +160,23 @@ def _nutrients(store) -> dict[str, Any]:
     except Exception:  # table not created yet on an older database
         return {"analytes": [], "samples": []}
 
+    reference = (config or {}).get("insitu_reference", {}) or {}
+
     present = []
-    for key, label, unit, precision in NUTRIENT_ANALYTES:
+    for key, label, unit, precision, group in NUTRIENT_ANALYTES:
         if any(r.get(key) is not None for r in rows):
+            ref = reference.get(key) or {}
             present.append(
-                {"key": key, "label": label, "unit": unit, "precision": precision}
+                {
+                    "key": key,
+                    "label": label,
+                    "unit": unit,
+                    "precision": precision,
+                    "group": group,
+                    "typical": ref.get("typical"),
+                    "outer": ref.get("outer"),
+                    "basis": ref.get("basis"),
+                }
             )
 
     samples = []
@@ -181,7 +194,14 @@ def _nutrients(store) -> dict[str, Any]:
         }
         samples.append(sample)
 
-    return {"analytes": present, "samples": samples}
+    # Only offer a group heading if something in it was actually measured.
+    groups = [
+        {"key": key, "label": label}
+        for key, label in NUTRIENT_GROUPS
+        if any(a["group"] == key for a in present)
+    ]
+
+    return {"analytes": present, "groups": groups, "samples": samples}
 
 
 def _daily_stats(rows: list[dict[str, Any]], params: list[str]) -> list[dict[str, Any]]:
