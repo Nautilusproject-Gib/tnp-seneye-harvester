@@ -118,6 +118,33 @@ Daily statistics are n, minimum, maximum, mean and sample standard deviation per
 device per day per parameter. The dashboard's daily view draws the mean with a
 ±1 SD band and a min–max envelope.
 
+## The dashboard's two tabs
+
+**Seneye sensors** holds the continuous record: the parameter, window and series
+controls, a card per sump with its statistics, the detail chart and the daily
+statistics table.
+
+**In-situ samples** holds the hand-sampled record: the matrix table, a small
+chart per sump for the chosen analyte, and its own export. The two are kept
+apart because they are different measurement methods on different instruments at
+different cadences, and mixing their controls made both harder to read.
+
+### Exporting
+
+Each tab has an export panel. Tick the sumps you want, set a date range, and
+take the result as a CSV download or straight to the clipboard. The row count
+updates as you change the selection, so you know what you are getting before you
+ask for it.
+
+The sensor export offers either every reading or the daily statistics, and
+defaults its dates to whatever window is selected above. The in-situ export
+defaults to the whole record, since those samples go back months and that tab
+has no window control. Filenames carry the range, for example
+`nursery-sensor-readings_2026-08-13_to_2026-09-21.csv`.
+
+Downloads use a blob URL, which works on the published site. Where a browser
+blocks it, the data goes to the clipboard instead and the button says so.
+
 ## Modelled values
 
 Two figures on the dashboard are calculated rather than measured. Both are
