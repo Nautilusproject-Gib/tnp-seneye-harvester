@@ -31,7 +31,7 @@
 
   "devices": {
     "_comment": "Seneye device id -> the sump it monitors, read from GET /v1/devices on 21 Sept 2026. The system letter, tank list and label are looked up from the sump. If a unit is moved, change its sump here; readings already stored keep the mapping they were collected under.",
-    "168779": { "sump": "SA12" },
+   "168779": { "sump": "SA12" },
     "166115": { "sump": "SA345" },
     "165185": { "sump": "SB12" },
     "162893": { "sump": "SB34" },
