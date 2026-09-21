@@ -23,16 +23,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       # No third-party packages are needed for the default SQLite backend.
-      # If DATABASE_URL points at Postgres or MySQL, install its driver here:
-      #   pip install psycopg[binary]      # Postgres
-      #   pip install mysql-connector-python  # MySQL
+      # If DATABASE_URL points at Postgres or MySQL, set the DB_DRIVER
+      # repository variable to the driver to install, e.g. psycopg[binary].
       - name: Install optional database driver
         if: vars.DB_DRIVER != ''
         run: pip install ${{ vars.DB_DRIVER }}
@@ -73,6 +70,8 @@ jobs:
         with:
           ref: main
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dashboard
