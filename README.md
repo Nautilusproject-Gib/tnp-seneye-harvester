@@ -26,10 +26,14 @@ Each Seneye sits in a sump, and a sump serves several tanks:
 | D | SD12, SD345 | D1–D5 |
 | E | SE12 | E1, E2 |
 
-Per Seneye reading: temperature, pH, free ammonia (NH₃), and — on reef units — PAR, lux
-and colour temperature, plus the device's own health flags (slide serial and
-expiry date, out-of-water, disconnected). A reading describes the shared water
-of the tanks on that sump, not an individual tank, and the dashboard says so.
+Per Seneye reading: temperature, pH and free ammonia (NH₃), plus the device's own
+health flags (slide serial and expiry date, out-of-water, disconnected). A reading
+describes the shared water of the tanks on that sump, not an individual tank, and
+the dashboard says so.
+
+The light metrics the reef units also report (PAR, lux, colour temperature) are
+not collected. The probes sit in the sumps rather than in the lit tanks, so they
+only ever read zero.
 
 ## Setup
 
@@ -114,6 +118,73 @@ Daily statistics are n, minimum, maximum, mean and sample standard deviation per
 device per day per parameter. The dashboard's daily view draws the mean with a
 ±1 SD band and a min–max envelope.
 
+## Modelled values
+
+Two figures on the dashboard are calculated rather than measured. Both are
+labelled "modelled" on their tab and carry a note on the chart explaining what
+they are. Neither is ever written into the same field as a measurement, and both
+are recomputed on every export, so changing the model needs no re-harvesting.
+`config.json` has a `derived` block to switch either off.
+
+**Ammonium (NH₄⁺)** is a genuine derivation. Free ammonia and ammonium are two
+sides of one equilibrium, so given the measured NH₃, pH and temperature, plus
+salinity, the rest of the total ammonia pool follows:
+
+```
+I   = 19.973 S / (1000 - 1.2005109 S)
+pKa = 0.0901821 + 2729.92/(T+273.2) + (0.1552 - 0.0003142 T) I
+f   = 1/(10^(pKa - pH) + 1)              fraction present as free NH3
+```
+
+Total ammonia is NH₃/f and ammonium is the remainder, converted by molar mass.
+At seawater pH only about 3% of the pool is free ammonia, so NH₄⁺ comes out far
+larger than NH₃, which is expected rather than a fault. The fit is valid for
+5–35 ppt, 5–35 °C and pH 7.8–8.3; outside that the value is withheld rather than
+extrapolated.
+
+**Oxygen at saturation** is *not* dissolved oxygen. It is how much oxygen the
+water could hold at the measured temperature and the salinity in use, at
+sea-level pressure. Real DO sits below this whenever respiration outpaces
+exchange, and measuring it needs a probe. It is shown as a ceiling and the
+dashboard says so in as many words.
+
+```
+DO0 = exp(-139.34411 + 1.575701e5/T - 6.642308e7/T^2
+          + 1.243800e10/T^3 - 8.621949e11/T^4)     mg/L, fresh water, 1 atm
+Fs  = exp(-S (0.017674 - 10.754/T + 2140.7/T^2))   salinity correction
+DO  = DO0 * Fs                                     T in kelvin
+```
+
+Checked against the published tables: 9.08 mg/L at 20 °C fresh, 7.38 at 20 °C
+and S=35, both matched to within 0.03 mg/L by the unit tests.
+
+**Salinity** for both comes from the most recent in-situ sample for that sump.
+Where a sump has no sample yet, `derived.default_salinity` is used. It is never
+invented per reading, and both models return nothing rather than guess when an
+input is missing.
+
+**Sources**
+
+Benson, B.B. and Krause, D. (1984) 'The concentration and isotopic fractionation
+of oxygen dissolved in freshwater and seawater in equilibrium with the
+atmosphere', *Limnology and Oceanography*, 29(3), pp. 620–632. Equation as
+adopted by the U.S. Geological Survey, *Office of Water Quality Technical
+Memorandum 2011.03*.
+
+Bell, T.G., Johnson, M.T., Jickells, T.D. and Liss, P.S. (2007)
+'Ammonia/ammonium dissociation coefficient in seawater: a significant numerical
+correction', *Environmental Chemistry*, 4(3), pp. 183–186.
+doi:10.1071/EN07032.
+
+Florida Department of Environmental Protection, *Calculation of un-ionized
+ammonia in fresh and saline water*, standard operating procedure, after
+Whitfield (1974) and Bower and Bidwell (1978).
+
+A caveat carried from Bell et al. (2007): expressions of this family, derived
+from Khoo et al. (1977), can overstate free NH₃ under some conditions. Since the
+harvester works the other way, from measured NH₃ to ammonium, an overstated pKa
+would understate ammonium. Treat the NH₄⁺ figure as indicative.
+
 ## In-situ samples
 
 The nursery is also sampled by hand at the sumps every week or two, with
@@ -168,6 +239,134 @@ sump `SA12`, and keyed on date plus sump, so a corrected sheet overwrites rather
 than duplicates. An analyte with no values anywhere is dropped from the export
 rather than shown as an empty chart.
 
+### Reference ranges and colouring
+
+Each in-situ value is compared with ordinary local seawater and coloured on
+three levels: green inside the typical range, amber between typical and the
+outer bound, red beyond it. Colour is not the only cue — amber cells carry a
+triangle and red cells a square, so the table still reads in greyscale.
+
+The ranges live in `config.json` under `insitu_reference`, each with the basis
+it was derived from. They describe **seawater**, not what *Posidonia* requires,
+and a red cell is a prompt to check the reading and the test kit rather than
+evidence of a problem.
+
+| Analyte | Typical | Outer | Derived from |
+|---|---|---|---|
+| Temperature | 13–20 °C | 11–22 | TNP nursery set points, not a seawater range |
+| Salinity | 35–38.5 ppt | 32–41 | Atlantic inflow ~36.2 to Mediterranean outflow ~38.4 at the Strait |
+| pH | 8.0–8.2 | 7.5–8.5 | surface ocean ~8.1; outer bounds are the nursery set points |
+| Carbonate hardness | 6.8–8.0 °dKH | 5–11 | Mediterranean surface alkalinity |
+| Nitrate | 0–0.25 mg/L | 0–1.0 | western Mediterranean surface nitrate |
+| Nitrite | 0–0.05 mg/L | 0–0.2 | upper-ocean nitrite |
+| Ammonia | 0–0.05 mg/L | 0–0.2 | surface ammonium, a few µmol/L at most |
+| Phosphate | 0–0.05 ppm | 0–0.3 | western Mediterranean surface phosphate |
+| Calcium | 400–455 ppm | 360–520 | 412 ppm at S=35, scaled with salinity |
+| Magnesium | 1250–1420 ppm | 1150–1600 | 1290 ppm at S=35, scaled with salinity |
+
+**The conversions**, so the numbers can be checked rather than taken on trust:
+
+- Alkalinity to dKH: 2600 µmol/kg × 1.027 kg/L ÷ 1000 = 2.67 meq/L; ÷ 0.3566 =
+  7.5 °dKH. The 2500–2650 µmol/kg range gives 7.2–7.6 °dKH.
+- Nutrients from µmol/L to mg/L as the ion: NO₃ × 62, NO₂ × 46, PO₄ × 95,
+  NH₄ × 18, all ÷ 1000. So 4 µmol/L nitrate = 0.25 mg/L, and 0.16 µmol/L
+  phosphate = 0.015 mg/L.
+- Major ions scale with salinity: Ca 412 and Mg 1290 at S=35 become ~452 and
+  ~1415 at S=38.4.
+- Phosphate, calcium and magnesium are read in ppm. In seawater 1 ppm is about
+  1.03 mg/L, because a litre weighs roughly 1.026 kg, so the same figures serve
+  for both units and the harvester converts nothing.
+
+**Sources**
+
+Belgacem, M., Schroeder, K., Barth, A., Troupin, C., Pavoni, B., Raimbault, P.,
+Garcia, N., Borghini, M. and Chiggiato, J. (2021) 'Climatological distribution
+of dissolved inorganic nutrients in the western Mediterranean Sea (1981–2017)',
+*Earth System Science Data*, 13, pp. 5915–5949. doi:10.5194/essd-13-5915-2021.
+
+Gemayel, E., Hassoun, A.E.R., Benallal, M.A., Goyet, C., Rivaro, P.,
+Abboud-Abi Saab, M., Krasakopoulou, E., Touratier, F. and Ziveri, P. (2015)
+'Climatological variations of total alkalinity and total dissolved inorganic
+carbon in the Mediterranean Sea surface waters', *Earth System Dynamics*, 6,
+pp. 789–800. doi:10.5194/esd-6-789-2015.
+
+Zakem, E.J., Al-Haj, A., Church, M.J., van Dijken, G.L., Dutkiewicz, S.,
+Foster, S.Q., Fulweiler, R.W., Mills, M.M. and Follows, M.J. (2018)
+'Ecological control of nitrite in the upper ocean', *Nature Communications*, 9,
+1206. doi:10.1038/s41467-018-03553-w.
+
+Major-ion concentrations at S=35 follow the standard seawater composition
+reported in oceanographic reference texts and summarised by the Global Seafood
+Alliance, *Typical chemical characteristics of full-strength seawater*.
+
+Two caveats worth keeping in view. The ammonia row assumes the kit reports
+total ammonia; if it reports free NH₃ the typical range should be an order of
+magnitude lower. And the nursery is a closed system on collected seawater, so
+nitrate and phosphate can legitimately sit above open-water values without
+anything being wrong.
+
+## Maintenance and issue tracking
+
+A hub for anyone working at the nursery: faults people find, and the planned
+jobs that fall due. Two tabs in the maintenance sheet, read the same way as the
+sampling data.
+
+**Maintenance** - one row per fault:
+
+| Issue ID | Date | Time | System / Sump | Equipment | Fault / problem | Severity | Status | Assigned to | Action taken | Date resolved | Reported by | Notes |
+
+**Schedule** - one row per recurring job:
+
+| Task ID | Task | System / Sump | Equipment | Frequency (days) | Last done | Done by | Next due | Notes |
+
+`templates/Nautilus_Maintenance_template.xlsx` has both tabs with the headings
+and one example row. Import it into the maintenance sheet, delete the examples,
+and publish each tab to the web as CSV as you did for the sampling data. Put
+each tab's URL (or its `gid`) in `config.json` under `maintenance`.
+
+### How the state is worked out
+
+Status is read from the sheet and mapped onto open, in progress and resolved.
+People type all sorts, so `closed`, `done`, `fixed` and `complete` all count as
+resolved, `WIP`, `started` and `awaiting parts` as in progress. Anything
+unrecognised is kept as written and treated as outstanding, so a typo never
+hides a fault from the board. A row with a resolution date but no status counts
+as resolved; a row with neither counts as open. A row with no description is not
+an issue at all and is skipped, which is what lets blank separator rows through.
+
+Severity is optional. Fill it in and the board sorts by it; leave it out and
+everything sorts by age.
+
+For planned jobs, next due comes from the sheet when it is filled in, otherwise
+from last done plus the frequency. A job with neither is listed with no due date
+rather than a guessed one. Overdue jobs sort to the top.
+
+The sheet is the record of truth, so each refresh replaces the tables wholesale:
+delete a row in the sheet and it disappears from the board. A tab that cannot be
+read is left alone rather than emptied.
+
+### Where the board goes
+
+The board is a page of its own at `board/index.html`, reading
+`board/data/maintenance.json`. It names the people who reported and carried out
+work, so by default it is **neither committed nor published**: `board/data/` is
+in `.gitignore`, and the Pages workflow only uploads `dashboard/`.
+
+That default exists because the repo is public. Three ways to give the team
+access to it:
+
+1. **A separate private repo** with Pages, once the free nonprofit Team plan is
+   in place. Pages on a private repo needs a paid or nonprofit plan. This is the
+   only option that is genuinely private and still a live URL.
+2. **Anonymised on the public site.** Set `maintenance.anonymise` to true and
+   `publish` to true. Faults, status and due dates become public; who reported
+   and who fixed them are stripped from the export.
+3. **Keep it in Google.** Everyone who can see the sheet can see the log. No
+   board, but no setup either.
+
+Until you pick one, the board is generated locally by a harvest run and can be
+opened straight from disk.
+
 ## Working ranges
 
 `config.json` gives each parameter a `band` (the nursery's working range, shaded
@@ -206,9 +405,12 @@ Mock rows carry `slide_serial` values beginning `MOCK-`; clear them with
 ## Layout
 
 ```
-harvester/    seneye.py (API client) · nutrients.py (sheet + workbook reader) · store.py (database)
+harvester/    seneye.py (API client) · nutrients.py (sheet + workbook reader)
+              maintenance.py (issues + planned jobs) · store.py (database)
               export.py (JSON) · harvest.py (CLI)
-dashboard/    index.html + data/
+dashboard/    index.html + data/   (public)
+board/        index.html + data/   (internal maintenance board, not published)
+templates/    maintenance sheet template
 sql/          schema for PostgreSQL and MySQL
 tools/        mock_data.py · build_artifact.py
 tests/        unit tests
