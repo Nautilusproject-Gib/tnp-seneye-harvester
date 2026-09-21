@@ -3,7 +3,7 @@
 
   "site": {
     "title": "Seagrass Nursery Monitoring",
-    "subtitle": "North Mole, Gibraltar",
+    "subtitle": "Gibraltar Seagrass Restoration Project, North Mole",
     "organisation": "The Nautilus Project",
     "timezone": "Europe/Gibraltar"
   },
@@ -66,39 +66,20 @@
       "hard": null
     },
     "nh4": {
-      "label": "Ammonium (NH₄⁺)",
+      "label": "Ammonium (NH\u2084\u207a, modelled)",
       "unit": "mg/L",
       "precision": 3,
       "band": null,
-      "hard": null
+      "hard": null,
+      "model_note": "Not measured. Worked out from the measured free ammonia, pH and temperature with the salinity in use, since NH3 and NH4+ are two sides of one equilibrium."
     },
-    "o2": {
-      "label": "Dissolved oxygen",
+    "o2_sat": {
+      "label": "Oxygen at saturation (modelled)",
       "unit": "mg/L",
       "precision": 2,
       "band": null,
-      "hard": null
-    },
-    "par": {
-      "label": "PAR",
-      "unit": "µmol m⁻² s⁻¹",
-      "precision": 0,
-      "band": null,
-      "hard": null
-    },
-    "lux": {
-      "label": "Illuminance",
-      "unit": "lux",
-      "precision": 0,
-      "band": null,
-      "hard": null
-    },
-    "kelvin": {
-      "label": "Colour temperature",
-      "unit": "K",
-      "precision": 0,
-      "band": null,
-      "hard": null
+      "hard": null,
+      "model_note": "Not a measurement of the oxygen in the tank. It is the most the water could hold at the measured temperature and the salinity in use, at sea-level pressure. Real dissolved oxygen sits below this whenever respiration outpaces exchange, and measuring it needs a probe."
     }
   },
 
@@ -109,6 +90,15 @@
     "sheet": "Nutrient",
     "cache": "data/nutrients_latest.csv",
     "method_note": "In-situ spot samples: handheld meters and test kits, read by eye. Accuracy and resolution differ from the Seneye probes, so the two are shown as separate measurements and never averaged together."
+  },
+
+  "derived": {
+    "_comment": "Values the Seneye does not measure, calculated from ones it does. Salinity comes from the most recent in-situ sample for that sump; default_salinity is used only where a sump has no sample yet. Set nh3_as_nitrogen to true if your Seneye reports NH3 as nitrogen (NH3-N) rather than as ammonia. Equations and sources are in harvester/derived.py and the README.",
+    "enabled": true,
+    "ammonium": true,
+    "oxygen_saturation": true,
+    "default_salinity": 36.5,
+    "nh3_as_nitrogen": false
   },
 
   "insitu_reference": {
