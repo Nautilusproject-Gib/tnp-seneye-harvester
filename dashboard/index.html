@@ -248,6 +248,20 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 /* Stacked rather than side by side: at panel width the status chip and the
    slide chip only sometimes fit on one line, and a panel that wraps while its
    neighbour does not shunts its sparkline out of alignment. */
+/* period summary under the big chart's title, matching the small panels */
+.detail-stats{
+  display:flex;flex-wrap:wrap;gap:2px 16px;font-size:12px;color:var(--ink-2);
+  font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  margin:2px 0 8px;
+}
+.detail-stats .k{color:var(--muted);margin-right:4px}
+.insitu-card .stats{
+  display:flex;flex-wrap:wrap;gap:2px 12px;font-size:11px;color:var(--ink-2);
+  font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  margin-top:2px;
+}
+.insitu-card .stats .k{color:var(--muted);margin-right:3px}
+
 .chips{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
 .chip.slide{font-family:"IBM Plex Mono",monospace;letter-spacing:.02em}
 .chip.slide .dot{border-radius:2px;width:7px;height:7px}
@@ -330,6 +344,8 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .legend{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 2px;font-size:12px;color:var(--ink-2)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .swatch{width:14px;height:10px;border-radius:2px;flex:none;border:1px solid var(--ring)}
+/* a dashed rule rather than a block, for legend entries that describe a line */
+.swatch.line{height:0;border:0;border-top:2px dashed currentColor;border-radius:0;align-self:center}
 .chart-box{position:relative}
 .chart{display:block;width:100%;height:340px;touch-action:pan-y}
 .tooltip{
@@ -474,6 +490,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       <span class="meta" id="detail-meta"></span>
     </div>
     <p class="model-note" id="model-note" hidden></p>
+    <div class="detail-stats" id="detail-stats"></div>
     <div class="legend" id="detail-legend"></div>
     <div class="chart-box">
       <svg class="chart" id="chart" role="img" aria-label="Time series"></svg>
@@ -898,6 +915,46 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     };
   }
 
+  function summariseDrawn(deviceId) {
+    // The panels summarise their sparkline; the big chart has to summarise
+    // what IT draws, which is the daily series in daily mode and the raw
+    // readings otherwise. Reusing the panel's numbers here would quietly
+    // report something other than the line on screen.
+    if (state.mode === "daily") {
+      var days = dailySeries(deviceId, state.param);
+      if (!days.length) return null;
+      var lo = Infinity, hi = -Infinity, weighted = 0, n = 0;
+      days.forEach(function (d) {
+        if (d.min < lo) lo = d.min;
+        if (d.max > hi) hi = d.max;
+        // Weighted by the readings behind each day, so a day with four
+        // readings does not count the same as a day with forty-eight.
+        weighted += d.mean * d.n;
+        n += d.n;
+      });
+      return { mean: n ? weighted / n : null, min: lo, max: hi,
+               n: n, days: days.length, unit: "readings" };
+    }
+    var points = rawSeries(deviceId, state.param);
+    var stats = summarise(points);
+    if (!stats) return null;
+    return { mean: stats.mean, min: stats.min, max: stats.max,
+             n: stats.n, days: null, unit: "readings" };
+  }
+
+  function writeStatLine(node, stats, def, tail) {
+    node.textContent = "";
+    if (!stats) {
+      statLine(node, "no data", "in this window");
+      return;
+    }
+    var unit = def.unit ? " " + def.unit : "";
+    statLine(node, "mean", fmt(stats.mean, def.precision) + unit);
+    statLine(node, "range",
+      fmt(stats.min, def.precision) + "\u2013" + fmt(stats.max, def.precision) + unit);
+    if (tail) statLine(node, tail.k, tail.v);
+  }
+
   function renderSpark(node, deviceId) {
     var W = 260, H = 56, pad = 5;
     node.setAttribute("viewBox", "0 0 " + W + " " + H);
@@ -1213,13 +1270,20 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       modelNote.hidden = true;
     }
 
+    var stats = summariseDrawn(device.device_id);
+    writeStatLine(el("detail-stats"), stats, def, stats ? {
+      k: "n",
+      v: stats.n + " reading" + (stats.n === 1 ? "" : "s") +
+         " across " + windowPhrase()
+    } : null);
+
     var legend = el("detail-legend");
     legend.textContent = "";
-    function legendItem(colour, label, opacity) {
+    function legendItem(colour, label, opacity, asLine) {
       var s = document.createElement("span");
       var sw = document.createElement("span");
-      sw.className = "swatch";
-      sw.style.background = colour;
+      sw.className = asLine ? "swatch line" : "swatch";
+      if (asLine) { sw.style.color = colour; } else { sw.style.background = colour; }
       if (opacity) sw.style.opacity = opacity;
       s.appendChild(sw);
       s.appendChild(document.createTextNode(label));
@@ -1231,6 +1295,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       legendItem("var(--series-faint)", "daily min–max");
     } else {
       legendItem("var(--series)", "reading");
+    }
+    if (stats && stats.mean !== null) {
+      legendItem("var(--muted)", "mean over " + windowPhrase(), null, true);
     }
     if (spotChecks(device.sump, state.param).length) {
       legendItem("var(--surface)", "in-situ spot sample");
@@ -1365,6 +1432,21 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       x1: m.left, x2: W - m.right, y1: H - m.bottom, y2: H - m.bottom,
       stroke: "var(--rule)", "stroke-width": "1"
     }));
+
+    // Mean over the window, the same dashed line the small panels carry, so
+    // the trace has something to sit against and the figure in the stats line
+    // above has a position on the chart. Drawn before the series so the trace
+    // stays on top of it.
+    var windowMean = summariseDrawn(device.device_id);
+    if (windowMean && windowMean.mean !== null &&
+        windowMean.mean >= lo && windowMean.mean <= hi) {
+      node.appendChild(svg("line", {
+        x1: m.left, x2: W - m.right,
+        y1: y(windowMean.mean), y2: y(windowMean.mean),
+        stroke: "var(--muted)", "stroke-width": "1", "stroke-dasharray": "4 4",
+        "vector-effect": "non-scaling-stroke"
+      }));
+    }
 
     function areaPath(upper, lower) {
       var d = "";
@@ -1839,6 +1921,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       ? "Shaded band is typical local seawater, " + def.typical[0] + "\u2013" +
         def.typical[1] + (def.unit ? " " + def.unit : "") + "."
       : "No seawater reference set for this analyte.";
+    sub.textContent += " Dashed rule is each sump's mean across every sample.";
     head.appendChild(sub);
     host.appendChild(head);
 
@@ -1921,6 +2004,17 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
         }));
       }
 
+      // Mean across this sump's samples, the same dashed rule the sensor
+      // panels and the big chart carry.
+      var cardStats = summarise(points);
+      if (cardStats && cardStats.mean >= lo && cardStats.mean <= hi) {
+        node.appendChild(svg("line", {
+          x1: 0, x2: W, y1: y(cardStats.mean), y2: y(cardStats.mean),
+          stroke: "var(--muted)", "stroke-width": "0.75", "stroke-dasharray": "3 3",
+          "vector-effect": "non-scaling-stroke"
+        }));
+      }
+
       if (points.length > 1) {
         var d = "";
         points.forEach(function (p, i) {
@@ -1946,6 +2040,11 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
         node.appendChild(circle);
       });
       card.appendChild(node);
+
+      var statsEl = document.createElement("div");
+      statsEl.className = "stats";
+      writeStatLine(statsEl, cardStats, def);
+      card.appendChild(statsEl);
 
       var foot = document.createElement("div");
       foot.className = "foot";
