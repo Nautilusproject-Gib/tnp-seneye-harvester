@@ -178,6 +178,11 @@ def enrich(rows: list[dict[str, Any]], sump_of: dict[str, str],
 
     produced: set[str] = set()
     for row in rows:
+        # Clear first. The Seneye API returns its own NH4 figure, and a stale
+        # one left in the row would be shown under the "modelled" label as
+        # though this code had produced it.
+        for key in DERIVED_PARAMETERS:
+            row[key] = None
         sump = sump_of.get(row.get("device_id"))
         s = salinity.get(sump, default_salinity)
         temp = row.get("temperature")

@@ -26,11 +26,16 @@ from typing import Any
 API_ROOT = "https://api.seneye.com/v1"
 USER_AGENT = "tnp-seneye-harvester/1.0 (+https://github.com/Nautilusproject-Gib)"
 
-# Parameters the Seneye actually measures and that the nursery uses. The light
-# metrics (PAR, lux, colour temperature) are dropped: the probes sit in sumps
-# rather than in lit tanks, so they only ever read zero. NH4 and O2 are kept as
-# columns because the harvester fills them from the models in derived.py.
-PARAMETERS = ("temperature", "ph", "nh3", "nh4", "o2")
+# What the Seneye actually measures at the nursery. Three things are left out
+# on purpose:
+#   PAR, lux, colour temperature - the probes sit in sumps, not in lit tanks,
+#     so they only ever read zero.
+#   O2 - the reef units do not measure dissolved oxygen. Whatever the API
+#     returns in that field is not a measurement of this water, and the
+#     dashboard shows modelled oxygen at saturation instead (see derived.py).
+# NH4 stays as a column because the harvester fills it from the model, having
+# first cleared anything the API put there.
+PARAMETERS = ("temperature", "ph", "nh3", "nh4")
 
 
 class SeneyeError(RuntimeError):
