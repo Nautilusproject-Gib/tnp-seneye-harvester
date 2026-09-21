@@ -125,5 +125,110 @@ class TestPayload(unittest.TestCase):
         store.close()
 
 
+
+class TestNutrients(unittest.TestCase):
+    """Parsing rules the TNP workbook actually exercises."""
+
+    def test_excel_serial_and_typed_dates_both_parse(self):
+        from harvester.nutrients import _excel_date
+        self.assertEqual(_excel_date("46247").isoformat(), "2026-08-13")
+        self.assertEqual(_excel_date("21/9/26").isoformat(), "2026-09-21")
+        self.assertIsNone(_excel_date(""))
+
+    def test_na_and_blanks_become_none(self):
+        from harvester.nutrients import _number
+        self.assertIsNone(_number("N/A"))
+        self.assertIsNone(_number(""))
+        self.assertIsNone(_number(None))
+        self.assertEqual(_number("0.0"), 0.0)
+        self.assertEqual(_number("<0.02"), 0.02)  # detection limit keeps its number
+
+    def test_tank_id_maps_to_sump(self):
+        from harvester.nutrients import sump_code
+        sumps = {"SA12": {}, "SD345": {}}
+        self.assertEqual(sump_code("A12", sumps), "SA12")
+        self.assertEqual(sump_code("SD345", sumps), "SD345")
+        self.assertIsNone(sump_code("Tank ID", sumps))
+        self.assertIsNone(sump_code("Z99", sumps))
+
+    def test_nutrients_upsert_replaces_a_corrected_value(self):
+        store = Store("sqlite://:memory:")
+        store.migrate()
+        base = {"sample_date": "2026-09-21", "sump_code": "SA12", "no3": 0.0}
+        store.upsert_nutrients([base])
+        store.upsert_nutrients([dict(base, no3=1.5)])
+        rows = store.query("SELECT sample_date, sump_code, no3 FROM nutrients")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["no3"], 1.5)
+        store.close()
+
+
+
+class TestSheetSource(unittest.TestCase):
+    """The CSV route from Google must agree with the .xlsx route exactly."""
+
+    HEADERS = ",Date,Time,Tank ID,Temp (°C),Salinity (ppt),pH,dKH (°dKH),NO₃ (mg/L),NO₂ (mg/L),NH₃,PO₄³⁻,Ca2+ (mg/L),Mg2+ (mg/L)"
+
+    def test_headings_normalise_past_units_and_subscripts(self):
+        from harvester.nutrients import normalise_heading
+        self.assertEqual(normalise_heading("NO₃ (mg/L)"), "no3")
+        self.assertEqual(normalise_heading("Mg2+ (mg/L)"), "mg2")
+        self.assertEqual(normalise_heading("dKH (°dKH)"), "dkh")
+        self.assertEqual(normalise_heading("Temp (°C)"), "temp")
+
+    def test_phosphate_does_not_steal_the_ph_column(self):
+        from harvester.nutrients import map_headings
+        headings = {"6": "pH", "11": "PO₄³⁻"}
+        mapping = map_headings(headings)
+        self.assertEqual(mapping["ph"], "6")
+        self.assertEqual(mapping["po4"], "11")
+
+    def test_csv_export_parses_with_carried_dates(self):
+        from harvester.nutrients import parse_csv
+        text = "\n".join([
+            self.HEADERS,
+            ",13/08/2026,12:38:00,A12,14.1,36.18,7.4,15,0,0,,,400,",
+            ",,,A345,15.6,36.93,7.4,10,0,0,,,400,",
+            ",,,,,,,,,,,,,",
+            ",21/9/26,,E12,16.9,33.8,8.3,,,,,,573,1560",
+        ])
+        records = parse_csv(text, {"SA12": {}, "SA345": {}, "SE12": {}})
+        self.assertEqual(len(records), 3)
+        self.assertEqual(records[0]["sample_date"], "2026-08-13")
+        self.assertEqual(records[0]["sample_time"], "12:38")
+        self.assertEqual(records[1]["sample_date"], "2026-08-13")  # carried down
+        self.assertEqual(records[1]["sump_code"], "SA345")
+        self.assertEqual(records[2]["sample_date"], "2026-09-21")
+        self.assertEqual(records[2]["mg"], 1560.0)
+
+    def test_a_reordered_sheet_still_maps_correctly(self):
+        from harvester.nutrients import parse_csv
+        text = "\n".join([
+            "Tank ID,Date,pH,Temp (°C),NO₃ (mg/L),Salinity (ppt)",
+            "A12,13/08/2026,7.4,14.1,0.5,36.18",
+        ])
+        record = parse_csv(text, {"SA12": {}})[0]
+        self.assertEqual(record["ph"], 7.4)
+        self.assertEqual(record["temp_c"], 14.1)
+        self.assertEqual(record["no3"], 0.5)
+        self.assertEqual(record["salinity_ppt"], 36.18)
+
+    def test_sheet_urls_normalise_to_a_csv_endpoint(self):
+        from harvester.nutrients import sheet_csv_url
+        self.assertIn(
+            "format=csv",
+            sheet_csv_url("https://docs.google.com/spreadsheets/d/ABC123/edit?usp=sharing"),
+        )
+        published = "https://docs.google.com/spreadsheets/d/e/2PACX-1vABC/pubhtml"
+        self.assertIn("output=csv", sheet_csv_url(published))
+        already = "https://docs.google.com/spreadsheets/d/e/2PACX/pub?gid=7&single=true&output=csv"
+        self.assertEqual(sheet_csv_url(already), already)
+
+    def test_an_unparseable_sheet_raises_rather_than_returning_nothing(self):
+        from harvester.nutrients import NutrientError, parse_csv
+        with self.assertRaises(NutrientError):
+            parse_csv("some,unrelated,csv\n1,2,3\n", {"SA12": {}})
+
+
 if __name__ == "__main__":
     unittest.main()

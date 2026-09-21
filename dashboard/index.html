@@ -193,6 +193,22 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .tooltip .t-row{display:flex;justify-content:space-between;gap:14px}
 .tooltip .t-row b{font-family:"IBM Plex Mono",monospace;font-weight:600}
 
+/* lab samples */
+.lab{
+  background:var(--surface);border:1px solid var(--rule);border-radius:12px;
+  box-shadow:var(--shadow);margin:0 0 18px;overflow:hidden;
+}
+.lab-head{
+  display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;
+  padding:14px 16px 12px;
+}
+.lab-head h2{margin:0;font-size:15px;font-weight:600}
+.lab-sub{margin:2px 0 0;font-size:12.5px;color:var(--ink-2)}
+.lab-note{margin:0;padding:10px 16px;font-size:12px;color:var(--muted);border-top:1px solid var(--grid)}
+td.lab-cell{position:relative}
+td.lab-cell[data-out="true"]{color:var(--critical);font-weight:600}
+.lab .table-scroll{border-top:1px solid var(--rule)}
+
 /* table */
 details.table-block{background:var(--surface);border:1px solid var(--rule);border-radius:12px;box-shadow:var(--shadow);padding:0}
 details.table-block > summary{
@@ -277,8 +293,25 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
   <div id="systems"></div>
 
+  <section class="lab" id="lab" hidden>
+    <div class="lab-head">
+      <div>
+        <h2>In-situ samples</h2>
+        <p class="lab-sub" id="lab-sub"></p>
+      </div>
+      <div class="segmented" id="analyte-tabs" role="group" aria-label="Analyte"></div>
+    </div>
+    <div class="table-scroll">
+      <table id="lab-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="lab-note" id="lab-note"></p>
+  </section>
+
   <details class="table-block" id="table-block">
-    <summary><span>Daily statistics</span></summary>
+    <summary><span>Daily statistics (Seneye)</span></summary>
     <div class="table-scroll">
       <table id="stats-table">
         <thead></thead>
@@ -294,7 +327,8 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
   <footer class="notes">
     <p id="prov-1">Readings come from Seneye monitors in the nursery sumps, polled from the Seneye cloud API and stored by the TNP harvester. Each sump serves the tanks listed on its panel, so a reading describes the water shared by those tanks rather than any single tank.</p>
     <p id="prov-2"></p>
-    <p>Working ranges shown on the charts are the nursery's own operating set points from <code>config.json</code>, not published tolerances for <i>Posidonia oceanica</i>.</p>
+    <p>Working ranges shown on the charts are the nursery's own operating set points, not published tolerances for <i>Posidonia oceanica</i>.</p>
+    <p id="prov-3"></p>
   </footer>
 </div>
 
@@ -317,6 +351,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     range: "7d",
     mode: "raw",
     device: null,
+    analyte: null,
     tz: "Europe/Gibraltar"
   };
 
@@ -478,6 +513,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     }
 
     var run = state.data.last_run;
+    el("prov-3").textContent = state.data.method_note || "";
     el("prov-2").textContent = run
       ? "Last harvest run " + fmtTime(run.finished_at, true) + " (" + run.status +
         (run.readings_inserted ? ", " + run.readings_inserted + " new readings" : "") + ")."
@@ -710,6 +746,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     } else {
       legendItem("var(--series)", "reading");
     }
+    if (spotChecks(device.sump, state.param).length) {
+      legendItem("var(--surface)", "in-situ spot sample");
+    }
     if (def.band) legendItem("var(--band)", "working range " + def.band[0] + "–" + def.band[1] + (def.unit ? " " + def.unit : ""));
     if (def.hard) legendItem("var(--critical)", "hard limit");
 
@@ -855,6 +894,19 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       });
     }
 
+    // hand-sampled spot checks for the same quantity, drawn as hollow
+    // diamonds so they read as a different kind of measurement, not as part
+    // of the sensor trace
+    spotChecks(device.sump, state.param).forEach(function (s) {
+      if (s.v < lo || s.v > hi) return;
+      var cx = x(s.t), cy = y(s.v), r = 5;
+      node.appendChild(svg("path", {
+        d: "M" + cx + " " + (cy - r) + "L" + (cx + r) + " " + cy +
+           "L" + cx + " " + (cy + r) + "L" + (cx - r) + " " + cy + "Z",
+        fill: "var(--surface)", stroke: "var(--accent)", "stroke-width": "2"
+      }));
+    });
+
     // endpoint marker
     var lastP = series[series.length - 1];
     var lastV = daily ? lastP.mean : lastP.v;
@@ -926,6 +978,157 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     node.addEventListener("touchstart", move, { passive: true });
     node.addEventListener("touchmove", move, { passive: true });
     node.addEventListener("touchend", leave);
+  }
+
+  // ---- rendering: lab samples -----------------------------------------
+
+  // Which hand-sampled analyte corresponds to which Seneye parameter, so a
+  // spot check can be drawn against the continuous trace it should agree with.
+  var SPOT_EQUIVALENT = { temperature: "temp_c", ph: "ph", nh3: "nh3" };
+
+  function nutrients() {
+    return state.data.nutrients || { analytes: [], samples: [] };
+  }
+
+  function sampleTime(sample) {
+    var parts = (sample.date || "").split("-");
+    if (parts.length !== 3) return null;
+    var hours = 12, mins = 0;
+    if (sample.time && /^\d{1,2}:\d{2}$/.test(sample.time)) {
+      var hm = sample.time.split(":");
+      hours = parseInt(hm[0], 10);
+      mins = parseInt(hm[1], 10);
+    }
+    return Math.floor(Date.UTC(+parts[0], +parts[1] - 1, +parts[2], hours, mins) / 1000);
+  }
+
+  function spotChecks(sumpCode, param) {
+    var key = SPOT_EQUIVALENT[param];
+    if (!key) return [];
+    var span = rangeSeconds();
+    var cutoff = span === null ? -Infinity : now() - span;
+    return nutrients().samples.filter(function (s) {
+      if (s.sump !== sumpCode) return false;
+      if (s.values[key] === undefined || s.values[key] === null) return false;
+      var t = sampleTime(s);
+      return t !== null && t >= cutoff;
+    }).map(function (s) {
+      return { t: sampleTime(s), v: s.values[key], date: s.date, observer: s.observer };
+    });
+  }
+
+  function renderLab() {
+    var box = el("lab");
+    var data = nutrients();
+    if (!data.analytes.length || !data.samples.length) { box.hidden = true; return; }
+    box.hidden = false;
+
+    if (!state.analyte || !data.analytes.some(function (a) { return a.key === state.analyte; })) {
+      state.analyte = data.analytes[0].key;
+    }
+    var def = null;
+    data.analytes.forEach(function (a) { if (a.key === state.analyte) def = a; });
+
+    buildSegmented(
+      el("analyte-tabs"),
+      data.analytes.map(function (a) { return { key: a.key, label: a.label }; }),
+      state.analyte,
+      function (key) { state.analyte = key; renderLab(); }
+    );
+
+    var dates = [], seen = {};
+    data.samples.forEach(function (s) {
+      if (!seen[s.date]) { seen[s.date] = true; dates.push(s.date); }
+    });
+    dates.sort();
+    dates = dates.slice(-8); // keep the table readable; full record is in the CSV
+
+    var sumps = [], sumpSeen = {};
+    (state.data.devices || []).forEach(function (d) {
+      if (d.sump && !sumpSeen[d.sump]) { sumpSeen[d.sump] = true; sumps.push(d.sump); }
+    });
+    data.samples.forEach(function (s) {
+      if (!sumpSeen[s.sump]) { sumpSeen[s.sump] = true; sumps.push(s.sump); }
+    });
+
+    var index = {};
+    data.samples.forEach(function (s) {
+      if (s.values[state.analyte] === undefined) return;
+      index[s.sump + "|" + s.date] = s;
+    });
+
+    var latestDate = dates[dates.length - 1];
+    var observers = {};
+    data.samples.forEach(function (s) {
+      if (s.date === latestDate && s.observer) observers[s.observer] = true;
+    });
+    var who = Object.keys(observers);
+    el("lab-sub").textContent =
+      data.samples.length + " samples across " +
+      Object.keys(data.samples.reduce(function (acc, s) { acc[s.date] = 1; return acc; }, {})).length +
+      " rounds · most recent " + fmtDate(sampleTime({ date: latestDate })) +
+      (who.length ? " (" + who.join(", ") + ")" : "");
+
+    var table = el("lab-table");
+    var thead = table.querySelector("thead");
+    var tbody = table.querySelector("tbody");
+    thead.textContent = ""; tbody.textContent = "";
+
+    var hr = document.createElement("tr");
+    var corner = document.createElement("th");
+    corner.textContent = "Sump";
+    hr.appendChild(corner);
+    dates.forEach(function (d) {
+      var th = document.createElement("th");
+      var parts = d.split("-");
+      th.textContent = parts[2] + "/" + parts[1];
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+
+    // A parameter that the Seneye also measures has a band; reuse it here so
+    // an out-of-range spot check is marked the same way as a sensor reading.
+    var bandDef = null;
+    for (var pk in SPOT_EQUIVALENT) {
+      if (SPOT_EQUIVALENT[pk] === state.analyte) bandDef = paramDef(pk);
+    }
+    var band = bandDef ? bandDef.band : null;
+
+    sumps.forEach(function (sump) {
+      var tr = document.createElement("tr");
+      var th = document.createElement("td");
+      th.textContent = sump;
+      tr.appendChild(th);
+      dates.forEach(function (d) {
+        var td = document.createElement("td");
+        td.className = "lab-cell";
+        var s = index[sump + "|" + d];
+        if (!s) {
+          td.textContent = "·";
+          td.style.color = "var(--muted)";
+        } else {
+          var v = s.values[state.analyte];
+          td.textContent = fmt(v, def.precision);
+          if (band && (v < band[0] || v > band[1])) {
+            td.setAttribute("data-out", "true");
+            td.title = "outside the working range " + band[0] + "–" + band[1];
+          }
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    var note = (state.data.method_note ||
+      "Taken by hand at the sumps with handheld meters and test kits.") +
+      (def.unit ? " Values in " + def.unit + "." : "") +
+      " One sample per sump; a dot means this analyte was not measured that round.";
+    if (bandDef) {
+      note += " Where the Seneye measures the same quantity, these samples are drawn " +
+        "on its chart as hollow diamonds for comparison. The two use different " +
+        "instruments, so they are not expected to agree exactly and are never averaged together.";
+    }
+    el("lab-note").textContent = note;
   }
 
   // ---- rendering: table -----------------------------------------------
@@ -1006,6 +1209,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     renderAlerts();
     renderDetail();
     renderPanels();
+    renderLab();
     renderTable();
   }
 

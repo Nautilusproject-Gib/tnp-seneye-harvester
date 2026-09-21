@@ -66,3 +66,23 @@ CREATE TABLE IF NOT EXISTS harvest_runs (
 -- FROM readings
 -- GROUP BY 1, 2
 -- ORDER BY 1, 2;
+
+-- Hand-sampled lab measurements, one row per sump per sampling round.
+CREATE TABLE IF NOT EXISTS nutrients (
+    sample_date  VARCHAR(10) NOT NULL,
+    sump_code    VARCHAR(16) NOT NULL,
+    sample_time  TEXT,
+    temp_c       DOUBLE,
+    salinity_ppt DOUBLE,
+    ph           DOUBLE,
+    dkh          DOUBLE,
+    no3          DOUBLE,
+    no2          DOUBLE,
+    nh3          DOUBLE,
+    po4          DOUBLE,
+    ca           DOUBLE,
+    mg           DOUBLE,
+    observer     TEXT,
+    notes        TEXT,
+    PRIMARY KEY (sample_date, sump_code)
+);

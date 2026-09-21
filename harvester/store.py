@@ -22,6 +22,7 @@ import urllib.parse
 from contextlib import contextmanager
 from typing import Any, Iterable, Sequence
 
+from .nutrients import NUMERIC_FIELDS as NUTRIENT_FIELDS
 from .seneye import PARAMETERS
 
 READING_COLUMNS: tuple[str, ...] = (
@@ -205,6 +206,22 @@ class Store:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_readings_time ON readings (reading_time)"
             )
+            nutrient_cols = ",\n            ".join(
+                f"{f} {numeric}" for f in NUTRIENT_FIELDS
+            )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS nutrients (
+                    sample_date {text} NOT NULL,
+                    sump_code {text} NOT NULL,
+                    sample_time {text},
+                    {nutrient_cols},
+                    observer {text},
+                    notes {text},
+                    PRIMARY KEY (sample_date, sump_code)
+                )
+                """
+            )
 
     # -- writes ------------------------------------------------------------
 
@@ -283,6 +300,39 @@ class Store:
                 )
                 inserted += 1
         return inserted
+
+    def upsert_nutrients(self, records: Iterable[dict[str, Any]]) -> int:
+        """Insert or replace hand-sampled nutrient rows, keyed on date + sump.
+
+        Replacing rather than skipping means a corrected value in the workbook
+        overwrites what was loaded before, which is what you want for data that
+        gets checked and revised after the fact.
+        """
+        records = list(records)
+        if not records:
+            return 0
+        columns = (
+            ("sample_date", "sump_code", "sample_time")
+            + tuple(NUTRIENT_FIELDS)
+            + ("observer", "notes")
+        )
+        cols = ", ".join(columns)
+        marks = ", ".join("?" for _ in columns)
+        written = 0
+        with self.cursor() as cur:
+            for record in records:
+                cur.execute(
+                    self.sql(
+                        "DELETE FROM nutrients WHERE sample_date = ? AND sump_code = ?"
+                    ),
+                    (record["sample_date"], record["sump_code"]),
+                )
+                cur.execute(
+                    self.sql(f"INSERT INTO nutrients ({cols}) VALUES ({marks})"),
+                    tuple(record.get(c) for c in columns),
+                )
+                written += 1
+        return written
 
     def start_run(self, started_at: int) -> None:
         self._run_started = started_at

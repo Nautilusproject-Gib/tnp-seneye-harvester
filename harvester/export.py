@@ -23,6 +23,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from .nutrients import ANALYTES as NUTRIENT_ANALYTES
 from .seneye import PARAMETERS
 
 DAY = 86400
@@ -121,6 +122,8 @@ def build_payload(
         for p in active
     ]
 
+    nutrients = _nutrients(store)
+
     last_run = store.query(
         "SELECT started_at, finished_at, status, readings_inserted, message "
         "FROM harvest_runs ORDER BY run_id DESC LIMIT 1"
@@ -130,14 +133,55 @@ def build_payload(
         "generated_at": now,
         "window_days": window_days,
         "site": config.get("site", {}),
+        "method_note": (config.get("nutrients", {}) or {}).get("method_note"),
         "devices": device_out,
         "parameters": parameters,
         "columns": ["device_id", "t"] + active,
         "readings": readings,
         "daily": daily,
         "latest": latest,
+        "nutrients": nutrients,
         "last_run": last_run[0] if last_run else None,
     }
+
+
+def _nutrients(store) -> dict[str, Any]:
+    """Hand-sampled lab measurements, keyed by sump rather than device.
+
+    Every sample is exported: there are a few dozen a year, not thousands, and
+    the whole point is to see the record end to end. Analytes with no values at
+    all are dropped so the dashboard never offers an empty chart.
+    """
+    try:
+        rows = store.query(
+            "SELECT * FROM nutrients ORDER BY sample_date, sump_code"
+        )
+    except Exception:  # table not created yet on an older database
+        return {"analytes": [], "samples": []}
+
+    present = []
+    for key, label, unit, precision in NUTRIENT_ANALYTES:
+        if any(r.get(key) is not None for r in rows):
+            present.append(
+                {"key": key, "label": label, "unit": unit, "precision": precision}
+            )
+
+    samples = []
+    for r in rows:
+        sample = {
+            "date": r["sample_date"],
+            "sump": r["sump_code"],
+            "time": r.get("sample_time"),
+            "observer": r.get("observer"),
+            "notes": r.get("notes"),
+            "values": {
+                a["key"]: _round(r.get(a["key"])) for a in present
+                if r.get(a["key"]) is not None
+            },
+        }
+        samples.append(sample)
+
+    return {"analytes": present, "samples": samples}
 
 
 def _daily_stats(rows: list[dict[str, Any]], params: list[str]) -> list[dict[str, Any]]:

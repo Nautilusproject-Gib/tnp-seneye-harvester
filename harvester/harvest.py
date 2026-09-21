@@ -28,6 +28,7 @@ if __package__ in (None, ""):  # allow `python harvester/harvest.py`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harvester.export import build_payload, write_csv, write_payload
+from harvester.nutrients import load as load_nutrients
 from harvester.seneye import SeneyeClient, SeneyeError
 from harvester.store import Store
 
@@ -48,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--csv", default=os.path.join(ROOT, "dashboard", "data", "readings.csv"))
     ap.add_argument("--window-days", type=int, default=None)
     ap.add_argument("--raw-days", type=int, default=None)
+    ap.add_argument("--nutrients", default=None,
+                    help="read samples from this .xlsx instead of the configured sheet")
+    ap.add_argument("--skip-nutrients", action="store_true")
     ap.add_argument("--export-only", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
@@ -109,6 +113,19 @@ def main(argv: list[str] | None = None) -> int:
             status = "error"
             message = str(exc)
             print(f"harvest failed: {exc}", file=sys.stderr)
+
+    # In-situ samples, re-read every run straight from the Google Sheet. A
+    # failure here must never stop the Seneye harvest or wipe what is stored.
+    if args.nutrients:
+        config.setdefault("nutrients", {})["workbook"] = args.nutrients
+        config["nutrients"].pop("sheet_url", None)
+    if args.skip_nutrients:
+        print("nutrients: skipped (--skip-nutrients)")
+    else:
+        try:
+            load_nutrients(store, config, ROOT)
+        except Exception as exc:
+            print(f"nutrients: could not load samples: {exc}", file=sys.stderr)
 
     export_cfg = config.get("export", {})
     payload = build_payload(

@@ -65,3 +65,24 @@ CREATE TABLE IF NOT EXISTS harvest_runs (
 -- FROM readings
 -- GROUP BY 1, 2
 -- ORDER BY 1, 2;
+
+-- Hand-sampled lab measurements, one row per sump per sampling round.
+-- Loaded from the nutrient workbook, keyed so a corrected sheet overwrites.
+CREATE TABLE IF NOT EXISTS nutrients (
+    sample_date  TEXT NOT NULL,            -- ISO date, YYYY-MM-DD
+    sump_code    TEXT NOT NULL,            -- SA12, SA345, ...
+    sample_time  TEXT,
+    temp_c       DOUBLE PRECISION,
+    salinity_ppt DOUBLE PRECISION,
+    ph           DOUBLE PRECISION,
+    dkh          DOUBLE PRECISION,         -- carbonate hardness, degrees dKH
+    no3          DOUBLE PRECISION,         -- nitrate, mg/L
+    no2          DOUBLE PRECISION,         -- nitrite, mg/L
+    nh3          DOUBLE PRECISION,         -- ammonia, mg/L
+    po4          DOUBLE PRECISION,         -- phosphate, mg/L
+    ca           DOUBLE PRECISION,         -- calcium, mg/L
+    mg           DOUBLE PRECISION,         -- magnesium, mg/L
+    observer     TEXT,
+    notes        TEXT,
+    PRIMARY KEY (sample_date, sump_code)
+);

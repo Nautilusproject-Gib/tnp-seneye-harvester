@@ -26,7 +26,7 @@ Each Seneye sits in a sump, and a sump serves several tanks:
 | D | SD12, SD345 | D1–D5 |
 | E | SE12 | E1, E2 |
 
-Per reading: temperature, pH, free ammonia (NH₃), and — on reef units — PAR, lux
+Per Seneye reading: temperature, pH, free ammonia (NH₃), and — on reef units — PAR, lux
 and colour temperature, plus the device's own health flags (slide serial and
 expiry date, out-of-water, disconnected). A reading describes the shared water
 of the tanks on that sump, not an individual tank, and the dashboard says so.
@@ -114,6 +114,60 @@ Daily statistics are n, minimum, maximum, mean and sample standard deviation per
 device per day per parameter. The dashboard's daily view draws the mean with a
 ±1 SD band and a min–max envelope.
 
+## In-situ samples
+
+The nursery is also sampled by hand at the sumps every week or two, with
+handheld meters and test kits: nitrate, nitrite, phosphate, salinity, carbonate
+hardness, calcium, magnesium, plus spot temperature and pH.
+
+These are a different measurement method from the Seneye probes, on different
+instruments with their own accuracy and resolution. They are stored in their own
+table and shown as their own thing. Where both measure the same quantity the
+hand sample is drawn on the sensor chart as a hollow diamond, for comparison
+only: the two are never averaged, and a difference between them is two
+instruments measuring, not an error to reconcile. The wording the dashboard uses
+to say so lives in `config.json` under `nutrients.method_note`, so you can put it
+in your own words.
+
+### Reading the sheet
+
+The harvester fetches the Google Sheet itself on every run. Set it up once:
+
+1. In the sheet: **File, Share, Publish to web**. Choose the **Nutrient** tab and
+   **Comma-separated values (.csv)**, then Publish.
+2. Put the sheet's URL in `config.json` under `nutrients.sheet_url`. Either the
+   published link or the ordinary `/edit` URL works; the harvester rewrites it to
+   the CSV endpoint.
+
+After that, anything typed into the sheet is on the dashboard within half an
+hour. Nothing to export, nothing to commit.
+
+Publishing makes that tab readable by anyone with the link. If the sampling data
+has to stay private, the alternative is a Google service account with the sheet
+shared to it and its key in an Actions secret, which is more setup; the code
+would need a `google-auth` dependency.
+
+### What happens when the fetch fails
+
+Nothing destructive. Samples already in the database are left exactly as they
+are, so an outage or an unpublished sheet shows as a stale date on the dashboard
+rather than an empty table. If a `data/nutrients.xlsx` is present it is used as a
+fallback. Every successful fetch is also written to `data/nutrients_latest.csv`
+and committed, which gives the repo a dated record of what the sheet said at the
+time.
+
+### What the parser copes with
+
+Columns are found by their headings rather than their position, so inserting a
+column in the sheet will not silently shift every value one field across.
+Beyond that: the date entered once at the top of each sampling block and left
+blank below it, dates both as real dates and as typed text like `21/9/26`, `N/A`
+for anything not measured that round, blank separator rows, and the empty first
+column. Rows are matched to sumps by the `Tank ID` column, where `A12` means
+sump `SA12`, and keyed on date plus sump, so a corrected sheet overwrites rather
+than duplicates. An analyte with no values anywhere is dropped from the export
+rather than shown as an empty chart.
+
 ## Working ranges
 
 `config.json` gives each parameter a `band` (the nursery's working range, shaded
@@ -152,7 +206,8 @@ Mock rows carry `slide_serial` values beginning `MOCK-`; clear them with
 ## Layout
 
 ```
-harvester/    seneye.py (API client) · store.py (database) · export.py (JSON) · harvest.py (CLI)
+harvester/    seneye.py (API client) · nutrients.py (sheet + workbook reader) · store.py (database)
+              export.py (JSON) · harvest.py (CLI)
 dashboard/    index.html + data/
 sql/          schema for PostgreSQL and MySQL
 tools/        mock_data.py · build_artifact.py
