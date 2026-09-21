@@ -12,10 +12,12 @@ Written to dashboard/data/nursery.json:
     latest{}       device_id -> most recent reading + device health flags
     readings[]     raw rows in the window: [device_id, t, temperature, ph, nh3, ...]
     daily[]        per device per day: n, min, max, mean, sd for each parameter
+    slides{}       when each sump's slide is due for replacement
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import os
@@ -29,6 +31,78 @@ from .nutrients import ANALYTES as NUTRIENT_ANALYTES
 from .seneye import PARAMETERS
 
 DAY = 86400
+
+
+def _parse_day(text: Any) -> int | None:
+    """A YYYY-MM-DD date from config as unix seconds at midnight UTC."""
+    if not text:
+        return None
+    try:
+        day = datetime.datetime.strptime(str(text).strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    return int(day.replace(tzinfo=datetime.timezone.utc).timestamp())
+
+
+def _slides(devices, latest, config, now):
+    """When each sump's slide is due to be replaced.
+
+    A Seneye slide lasts 30 days and is changed at the unit in the sump, so
+    this is per sump, not per tank. Two possible answers, in order:
+
+    * the expiry the sensor itself reports, when it reports one and it is not
+      absurd. The device knows when its own slide was registered, so this beats
+      anything written down by hand.
+    * the date the change was logged in config.json, plus `interval_days`.
+
+    Which one was used is exported alongside the date, because "the sensor says
+    so" and "someone wrote it down" are worth telling apart when a slide turns
+    out to have been missed. The number of days left is deliberately NOT worked
+    out here: the dashboard counts it in the browser, so the figure a student
+    reads is right for the day they read it rather than the day of the last
+    harvest.
+    """
+    cfg = config.get("slides", {}) or {}
+    if not cfg.get("enabled", True):
+        return {}
+    interval = int(cfg.get("interval_days", 30) or 30)
+    trust_sensor = bool(cfg.get("trust_sensor", True))
+    changed_cfg = {k: v for k, v in (cfg.get("changed") or {}).items()
+                   if not k.startswith("_")}
+    default_changed = _parse_day(cfg.get("default_changed"))
+
+    # A sensor expiry more than a year back or two months ahead is not a slide
+    # date, it is a default or a glitch, so it is not allowed to drive the
+    # countdown.
+    floor, ceiling = now - 365 * DAY, now + 60 * DAY
+
+    out = {}
+    for d in devices:
+        did, sump = d["device_id"], d.get("sump_code")
+        logged = _parse_day(changed_cfg.get(sump)) if sump else None
+        if logged is None:
+            logged = default_changed
+
+        entry = None
+        if trust_sensor:
+            reported = (latest.get(did) or {}).get("slide_expires")
+            try:
+                reported = int(reported) if reported else None
+            except (TypeError, ValueError):
+                reported = None
+            if reported and floor <= reported <= ceiling:
+                entry = {"due": reported, "source": "sensor",
+                         "changed": reported - interval * DAY}
+
+        if entry is None and logged is not None:
+            entry = {"due": logged + interval * DAY, "source": "logged",
+                     "changed": logged}
+
+        if entry is None:
+            continue
+        entry["serial"] = (latest.get(did) or {}).get("slide_serial")
+        out[did] = entry
+    return out
 
 
 def build_payload(
@@ -158,6 +232,11 @@ def build_payload(
         "readings": readings,
         "daily": daily,
         "latest": latest,
+        "slides": {
+            "interval_days": int((config.get("slides", {}) or {}).get("interval_days", 30) or 30),
+            "warn_days": int((config.get("slides", {}) or {}).get("warn_days", 7) or 7),
+            "by_device": _slides(devices, latest, config, now),
+        },
         "nutrients": nutrients,
         "last_run": last_run[0] if last_run else None,
     }
