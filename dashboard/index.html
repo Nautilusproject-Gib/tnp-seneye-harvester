@@ -129,6 +129,71 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .freshness{margin-left:auto;text-align:right;font-size:12px;color:var(--ink-2)}
 .freshness strong{display:block;font-size:13px;color:var(--ink);font-weight:600}
 
+/* view tabs */
+.views{display:flex;gap:4px;margin:18px 0 0;border-bottom:1px solid var(--rule)}
+.views button{
+  font:inherit;font-size:14px;font-weight:500;color:var(--ink-2);background:none;
+  border:0;border-bottom:2px solid transparent;padding:9px 14px;cursor:pointer;margin-bottom:-1px;
+}
+.views button:hover{color:var(--ink)}
+.views button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+.views button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* export */
+.export{
+  background:var(--surface);border:1px solid var(--rule);border-radius:12px;
+  box-shadow:var(--shadow);margin:18px 0 0;
+}
+.export summary{
+  cursor:pointer;list-style:none;padding:13px 16px;font-size:14px;font-weight:600;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.export summary::-webkit-details-marker{display:none}
+.export summary::after{content:"+";font-family:"IBM Plex Mono",monospace;color:var(--muted)}
+.export details[open] > summary::after{content:"\2212"}
+.export .body{padding:0 16px 14px;border-top:1px solid var(--rule);padding-top:14px}
+.export .row{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end;margin-bottom:12px}
+.export fieldset{border:0;margin:0;padding:0;min-width:0}
+.export legend{
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);padding:0 0 6px;
+}
+.sump-picks{display:flex;flex-wrap:wrap;gap:4px}
+.sump-picks label{
+  display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;
+  border:1px solid var(--rule);border-radius:999px;padding:5px 11px 5px 9px;background:var(--surface-2);
+}
+.sump-picks label:hover{border-color:var(--accent)}
+.sump-picks input{margin:0;accent-color:var(--accent)}
+.sump-picks label:has(input:checked){border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}
+.export input[type="date"],.export select{
+  font:inherit;font-size:13px;color:var(--ink);background:var(--surface);
+  border:1px solid var(--rule);border-radius:8px;padding:6px 9px;
+}
+.export .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.export .count{font-size:12.5px;color:var(--muted)}
+.primary-btn{
+  font:inherit;font-size:13px;font-weight:500;color:#fff;background:var(--accent);
+  border:1px solid var(--accent);border-radius:8px;padding:7px 14px;cursor:pointer;
+}
+.primary-btn:hover{filter:brightness(1.08)}
+.primary-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* in-situ small multiples */
+.insitu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:14px}
+.insitu-card{
+  background:var(--surface);border:1px solid var(--rule);border-radius:12px;
+  padding:11px 12px 8px;box-shadow:var(--shadow);
+}
+.insitu-card h3{margin:0;font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:600;letter-spacing:.03em}
+.insitu-card .cur{font-family:"IBM Plex Mono",monospace;font-size:18px;font-weight:600}
+.insitu-card .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.insitu-card .mini{display:block;width:100%;height:64px;margin-top:4px}
+.insitu-card .foot{font-size:11px;color:var(--muted);font-family:"IBM Plex Mono",monospace}
+.section-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;margin:22px 0 0}
+.section-head h2{margin:0;font-size:15px;font-weight:600}
+.section-head p{margin:0;font-size:12.5px;color:var(--ink-2)}
+
 /* controls */
 .controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end;margin:22px 0 18px}
 .control{display:flex;flex-direction:column;gap:6px}
@@ -338,6 +403,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 </header>
 
 <div class="wrap">
+  <nav class="views" id="views" aria-label="Data source"></nav>
+
+  <section id="view-sensor">
   <div class="controls">
     <div class="control" role="group">
       <span>Parameter</span>
@@ -373,6 +441,25 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
   <div id="systems"></div>
 
+
+  <details class="table-block" id="table-block">
+    <summary><span>Daily statistics (Seneye)</span></summary>
+    <div class="table-scroll">
+      <table id="stats-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="table-foot">
+      <span id="table-note"></span>
+      <button class="ghost-btn" type="button" id="copy-csv">Copy table as CSV</button>
+    </div>
+  </details>
+
+  <div class="export" id="export-sensor"></div>
+  </section>
+
+  <section id="view-insitu" hidden>
   <section class="lab" id="lab" hidden>
     <div class="lab-head">
       <div>
@@ -390,20 +477,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     </div>
     <p class="lab-note" id="lab-note"></p>
   </section>
-
-  <details class="table-block" id="table-block">
-    <summary><span>Daily statistics (Seneye)</span></summary>
-    <div class="table-scroll">
-      <table id="stats-table">
-        <thead></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="table-foot">
-      <span id="table-note"></span>
-      <button class="ghost-btn" type="button" id="copy-csv">Copy table as CSV</button>
-    </div>
-  </details>
+    <div id="insitu-charts"></div>
+    <div class="export" id="export-insitu"></div>
+  </section>
 
   <footer class="notes">
     <p id="prov-1">Readings come from Seneye monitors in the nursery sumps, polled from the Seneye cloud API and stored by the TNP harvester. Each sump serves the tanks listed on its panel, so a reading describes the water shared by those tanks rather than any single tank.</p>
@@ -434,6 +510,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     mode: "raw",
     device: null,
     analyte: null,
+    view: "sensor",
     tz: "Europe/Gibraltar"
   };
 
@@ -1398,7 +1475,11 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
         seg,
         members.map(function (a) { return { key: a.key, label: a.label }; }),
         state.analyte,
-        function (key) { state.analyte = key; renderLab(); }
+        function (key) {
+          state.analyte = key;
+          renderLab();
+          renderInsituCharts();
+        }
       );
       row.appendChild(seg);
       tabs.appendChild(row);
@@ -1581,14 +1662,513 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
   // ---- boot ------------------------------------------------------------
 
+  // ---- in-situ charts ---------------------------------------------------
+
+  // One small chart per sump rather than nine lines on one axis: with a
+  // handful of sampling rounds the shape per sump is what matters, and nine
+  // colours on one chart would be unreadable.
+  function renderInsituCharts() {
+    var host = el("insitu-charts");
+    host.textContent = "";
+    var data = nutrients();
+    if (!data.samples.length || !state.analyte) return;
+
+    var def = null;
+    data.analytes.forEach(function (a) { if (a.key === state.analyte) def = a; });
+    if (!def) return;
+
+    var head = document.createElement("div");
+    head.className = "section-head";
+    var h2 = document.createElement("h2");
+    h2.textContent = def.label + " by sump";
+    head.appendChild(h2);
+    var sub = document.createElement("p");
+    sub.textContent = def.typical
+      ? "Shaded band is typical local seawater, " + def.typical[0] + "\u2013" +
+        def.typical[1] + (def.unit ? " " + def.unit : "") + "."
+      : "No seawater reference set for this analyte.";
+    head.appendChild(sub);
+    host.appendChild(head);
+
+    var grid = document.createElement("div");
+    grid.className = "insitu-grid";
+
+    var bySump = {};
+    data.samples.forEach(function (sample) {
+      var v = sample.values[state.analyte];
+      if (v === undefined || v === null) return;
+      (bySump[sample.sump] = bySump[sample.sump] || []).push({
+        t: sampleTime(sample), v: v, date: sample.date
+      });
+    });
+
+    var sumps = Object.keys(bySump).sort();
+    if (!sumps.length) {
+      var none = document.createElement("div");
+      none.className = "empty";
+      none.textContent = "No sump has a value for " + def.label.toLowerCase() + " yet.";
+      host.appendChild(none);
+      return;
+    }
+
+    // One scale across every sump, so the cards can be compared with each other
+    var lo = Infinity, hi = -Infinity;
+    sumps.forEach(function (sump) {
+      bySump[sump].forEach(function (p) {
+        if (p.v < lo) lo = p.v;
+        if (p.v > hi) hi = p.v;
+      });
+    });
+    if (def.typical) {
+      lo = Math.min(lo, def.typical[0]);
+      hi = Math.max(hi, def.typical[1]);
+    }
+    if (hi === lo) { hi += 1; lo -= 1; }
+    var pad = (hi - lo) * 0.12;
+    lo -= pad; hi += pad;
+
+    var times = [];
+    sumps.forEach(function (sump) {
+      bySump[sump].forEach(function (p) { times.push(p.t); });
+    });
+    var t0 = Math.min.apply(null, times), t1 = Math.max.apply(null, times);
+    if (t1 === t0) t1 = t0 + 1;
+
+    sumps.forEach(function (sump) {
+      var points = bySump[sump].sort(function (a, b) { return a.t - b.t; });
+      var card = document.createElement("div");
+      card.className = "insitu-card";
+
+      var top = document.createElement("div");
+      top.className = "head";
+      var title = document.createElement("h3");
+      title.textContent = sump;
+      var cur = document.createElement("span");
+      cur.className = "cur";
+      var last = points[points.length - 1];
+      cur.textContent = fmt(last.v, def.precision);
+      var verdict = classify(last.v, def);
+      cur.style.color = verdict.level === "typical" ? "var(--ok-ink)"
+        : verdict.level === "near" ? "var(--near-ink)"
+        : verdict.level === "far" ? "var(--far-ink)" : "var(--ink)";
+      top.appendChild(title);
+      top.appendChild(cur);
+      card.appendChild(top);
+
+      var W = 240, H = 64, padX = 8, padY = 7;
+      var node = svg("svg", { class: "mini", viewBox: "0 0 " + W + " " + H,
+                              preserveAspectRatio: "none" });
+      var x = function (t) { return padX + (t - t0) / (t1 - t0) * (W - 2 * padX); };
+      var y = function (v) { return H - padY - (v - lo) / (hi - lo) * (H - 2 * padY); };
+
+      if (def.typical) {
+        var yTop = y(Math.min(def.typical[1], hi)), yBot = y(Math.max(def.typical[0], lo));
+        node.appendChild(svg("rect", {
+          x: 0, y: Math.min(yTop, yBot), width: W, height: Math.abs(yBot - yTop),
+          fill: "var(--band)"
+        }));
+      }
+
+      if (points.length > 1) {
+        var d = "";
+        points.forEach(function (p, i) {
+          d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.v).toFixed(1);
+        });
+        node.appendChild(svg("path", {
+          d: d, fill: "none", stroke: "var(--series)", "stroke-width": "1.6",
+          "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke"
+        }));
+      }
+      points.forEach(function (p) {
+        var level = classify(p.v, def).level;
+        var circle = svg("circle", {
+          cx: x(p.t), cy: y(p.v), r: 3,
+          fill: level === "far" ? "var(--far-ink)"
+              : level === "near" ? "var(--near-ink)" : "var(--series)",
+          stroke: "var(--surface)", "stroke-width": "1.2"
+        });
+        var t = svg("title", {});
+        t.textContent = fmtDate(p.t) + ": " + fmt(p.v, def.precision) +
+          (def.unit ? " " + def.unit : "");
+        circle.appendChild(t);
+        node.appendChild(circle);
+      });
+      card.appendChild(node);
+
+      var foot = document.createElement("div");
+      foot.className = "foot";
+      foot.textContent = points.length + " sample" + (points.length === 1 ? "" : "s") +
+        " \u00b7 last " + fmtDate(last.t);
+      card.appendChild(foot);
+      grid.appendChild(card);
+    });
+
+    host.appendChild(grid);
+  }
+
+  // ---- view tabs -------------------------------------------------------
+
+  var VIEWS = [
+    { key: "sensor", label: "Seneye sensors" },
+    { key: "insitu", label: "In-situ samples" }
+  ];
+
+  function renderViews() {
+    var nav = el("views");
+    nav.textContent = "";
+    var hasSamples = nutrients().samples.length > 0;
+    VIEWS.forEach(function (view) {
+      if (view.key === "insitu" && !hasSamples) return;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = view.label;
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", view.key === state.view ? "true" : "false");
+      b.addEventListener("click", function () { state.view = view.key; renderAll(); });
+      nav.appendChild(b);
+    });
+    el("view-sensor").hidden = state.view !== "sensor";
+    el("view-insitu").hidden = state.view !== "insitu";
+  }
+
+  // ---- export ----------------------------------------------------------
+
+  function allSumps() {
+    var seen = {}, out = [];
+    (state.data.devices || []).forEach(function (d) {
+      if (d.sump && !seen[d.sump]) { seen[d.sump] = true; out.push(d.sump); }
+    });
+    nutrients().samples.forEach(function (sample) {
+      if (!seen[sample.sump]) { seen[sample.sump] = true; out.push(sample.sump); }
+    });
+    return out.sort();
+  }
+
+  function isoDay(unix) {
+    var d = new Date(unix * 1000);
+    return d.getUTCFullYear() + "-" +
+      String(d.getUTCMonth() + 1).padStart(2, "0") + "-" +
+      String(d.getUTCDate()).padStart(2, "0");
+  }
+
+  function csvEscape(value) {
+    if (value === null || value === undefined) return "";
+    var text = String(value);
+    return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  function toCsv(header, rows) {
+    return [header.join(",")].concat(rows.map(function (r) {
+      return r.map(csvEscape).join(",");
+    })).join("\n");
+  }
+
+  function deliver(filename, text, button) {
+    // A real download where the browser allows one, clipboard where it does
+    // not, so the data is always retrievable.
+    try {
+      var blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      flash(button, "Downloaded");
+      return;
+    } catch (err) { /* fall through to the clipboard */ }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        flash(button, "Copied instead");
+      }, function () { window.prompt("Copy the CSV:", text); });
+    } else {
+      window.prompt("Copy the CSV:", text);
+    }
+  }
+
+  function flash(button, message) {
+    var original = button.textContent;
+    button.textContent = message;
+    setTimeout(function () { button.textContent = original; }, 1800);
+  }
+
+  function buildExport(host, kind) {
+    host.textContent = "";
+    var sumps = allSumps();
+    if (!sumps.length) return;
+
+    var picked = {};
+    sumps.forEach(function (sump) { picked[sump] = true; });
+
+    var details = document.createElement("details");
+    var summary = document.createElement("summary");
+    summary.textContent = kind === "sensor"
+      ? "Export sensor readings" : "Export in-situ samples";
+    details.appendChild(summary);
+
+    var body = document.createElement("div");
+    body.className = "body";
+    details.appendChild(body);
+
+    // which sumps
+    var row1 = document.createElement("div");
+    row1.className = "row";
+    var fsSumps = document.createElement("fieldset");
+    var lg = document.createElement("legend");
+    lg.textContent = "Sumps";
+    fsSumps.appendChild(lg);
+    var picks = document.createElement("div");
+    picks.className = "sump-picks";
+    var boxes = {};
+    sumps.forEach(function (sump) {
+      var label = document.createElement("label");
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = true;
+      box.addEventListener("change", function () {
+        picked[sump] = box.checked;
+        updateCount();
+      });
+      boxes[sump] = box;
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(sump));
+      picks.appendChild(label);
+    });
+    fsSumps.appendChild(picks);
+    row1.appendChild(fsSumps);
+    body.appendChild(row1);
+
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "ghost-btn";
+    toggle.textContent = "None";
+    toggle.addEventListener("click", function () {
+      var turningOn = toggle.textContent === "All";
+      sumps.forEach(function (sump) {
+        picked[sump] = turningOn;
+        boxes[sump].checked = turningOn;
+      });
+      toggle.textContent = turningOn ? "None" : "All";
+      updateCount();
+    });
+    picks.appendChild(toggle);
+
+    // dates
+    var row2 = document.createElement("div");
+    row2.className = "row";
+    // The sensor export follows the window you are looking at. The in-situ
+    // tab has no window control, and its samples go back months, so it
+    // defaults to everything on record.
+    var span = rangeSeconds();
+    var defaultFrom = kind === "sensor"
+      ? (span === null ? oldestReading() : now() - span)
+      : oldestSample();
+    var fromInput = dateField(row2, "From", isoDay(defaultFrom));
+    var toInput = dateField(row2, "To", isoDay(now()));
+
+    var shapeSelect = null;
+    if (kind === "sensor") {
+      var fs = document.createElement("fieldset");
+      var lg2 = document.createElement("legend");
+      lg2.textContent = "Rows";
+      fs.appendChild(lg2);
+      shapeSelect = document.createElement("select");
+      [["raw", "Every reading"], ["daily", "Daily statistics"]].forEach(function (opt) {
+        var o = document.createElement("option");
+        o.value = opt[0];
+        o.textContent = opt[1];
+        shapeSelect.appendChild(o);
+      });
+      shapeSelect.addEventListener("change", updateCount);
+      fs.appendChild(shapeSelect);
+      row2.appendChild(fs);
+    }
+    fromInput.addEventListener("change", updateCount);
+    toInput.addEventListener("change", updateCount);
+    body.appendChild(row2);
+
+    // actions
+    var actions = document.createElement("div");
+    actions.className = "actions";
+    var download = document.createElement("button");
+    download.type = "button";
+    download.className = "primary-btn";
+    download.textContent = "Download CSV";
+    var copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "ghost-btn";
+    copy.textContent = "Copy CSV";
+    var count = document.createElement("span");
+    count.className = "count";
+    actions.appendChild(download);
+    actions.appendChild(copy);
+    actions.appendChild(count);
+    body.appendChild(actions);
+
+    function chosen() {
+      return sumps.filter(function (sump) { return picked[sump]; });
+    }
+
+    function build() {
+      var from = Date.parse(fromInput.value + "T00:00:00Z") / 1000;
+      var to = Date.parse(toInput.value + "T23:59:59Z") / 1000;
+      if (isNaN(from) || isNaN(to)) return null;
+      return kind === "sensor"
+        ? sensorCsv(chosen(), from, to, shapeSelect ? shapeSelect.value : "raw")
+        : insituCsv(chosen(), from, to);
+    }
+
+    function updateCount() {
+      var built = build();
+      count.textContent = built
+        ? built.rows.length + " row" + (built.rows.length === 1 ? "" : "s") +
+          " from " + chosen().length + " sump" + (chosen().length === 1 ? "" : "s")
+        : "check the dates";
+    }
+
+    download.addEventListener("click", function () {
+      var built = build();
+      if (!built) return;
+      deliver(built.filename, toCsv(built.header, built.rows), download);
+    });
+    copy.addEventListener("click", function () {
+      var built = build();
+      if (!built) return;
+      var text = toCsv(built.header, built.rows);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          flash(copy, "Copied");
+        }, function () { window.prompt("Copy the CSV:", text); });
+      } else {
+        window.prompt("Copy the CSV:", text);
+      }
+    });
+
+    updateCount();
+    host.appendChild(details);
+  }
+
+  function dateField(row, label, value) {
+    var fs = document.createElement("fieldset");
+    var lg = document.createElement("legend");
+    lg.textContent = label;
+    fs.appendChild(lg);
+    var input = document.createElement("input");
+    input.type = "date";
+    input.value = value;
+    fs.appendChild(input);
+    row.appendChild(fs);
+    return input;
+  }
+
+  function oldestSample() {
+    var oldest = now();
+    nutrients().samples.forEach(function (sample) {
+      var t = sampleTime(sample);
+      if (t !== null && t < oldest) oldest = t;
+    });
+    return oldest;
+  }
+
+  function oldestReading() {
+    var oldest = now();
+    (state.data.daily || []).forEach(function (d) {
+      if (d.day < oldest) oldest = d.day;
+    });
+    return oldest;
+  }
+
+  function sensorCsv(sumps, from, to, shape) {
+    var wanted = {};
+    sumps.forEach(function (sump) { wanted[sump] = true; });
+    var sumpOf = {}, tanksOf = {};
+    (state.data.devices || []).forEach(function (d) {
+      sumpOf[d.device_id] = d.sump;
+      tanksOf[d.device_id] = (d.tanks || []).join(" ");
+    });
+    var params = (state.data.parameters || []).map(function (p) { return p.key; });
+    var labels = (state.data.parameters || []).map(function (p) {
+      return p.label + (p.unit ? " (" + p.unit + ")" : "");
+    });
+    var rows = [];
+
+    if (shape === "daily") {
+      var header = ["sump", "tanks", "day"];
+      params.forEach(function (p) {
+        header.push(p + "_n", p + "_min", p + "_max", p + "_mean", p + "_sd");
+      });
+      (state.data.daily || []).forEach(function (d) {
+        var sump = sumpOf[d.device_id];
+        if (!wanted[sump] || d.day < from || d.day > to) return;
+        var row = [sump, tanksOf[d.device_id], isoDay(d.day)];
+        params.forEach(function (p) {
+          var stat = d[p];
+          row.push(stat ? stat.n : "", stat ? stat.min : "", stat ? stat.max : "",
+                   stat ? stat.mean : "", stat ? stat.sd : "");
+        });
+        rows.push(row);
+      });
+      return { header: header, rows: rows, filename: filenameFor("sensor-daily", from, to) };
+    }
+
+    var ti = colIndex("t"), di = colIndex("device_id");
+    var header2 = ["sump", "tanks", "timestamp_utc"].concat(labels);
+    (state.data.readings || []).forEach(function (r) {
+      var sump = sumpOf[r[di]];
+      if (!wanted[sump] || r[ti] < from || r[ti] > to) return;
+      var row = [sump, tanksOf[r[di]], new Date(r[ti] * 1000).toISOString()];
+      params.forEach(function (p) {
+        var idx = colIndex(p);
+        row.push(idx >= 0 ? r[idx] : "");
+      });
+      rows.push(row);
+    });
+    return { header: header2, rows: rows, filename: filenameFor("sensor-readings", from, to) };
+  }
+
+  function insituCsv(sumps, from, to) {
+    var wanted = {};
+    sumps.forEach(function (sump) { wanted[sump] = true; });
+    var analytes = nutrients().analytes;
+    var header = ["sump", "date", "time", "observer"].concat(
+      analytes.map(function (a) { return a.label + (a.unit ? " (" + a.unit + ")" : ""); })
+    ).concat(["notes"]);
+    var rows = [];
+    nutrients().samples.forEach(function (sample) {
+      var t = sampleTime(sample);
+      if (!wanted[sample.sump] || t === null || t < from || t > to) return;
+      var row = [sample.sump, sample.date, sample.time || "", sample.observer || ""];
+      analytes.forEach(function (a) {
+        var v = sample.values[a.key];
+        row.push(v === undefined || v === null ? "" : v);
+      });
+      row.push(sample.notes || "");
+      rows.push(row);
+    });
+    return { header: header, rows: rows, filename: filenameFor("insitu-samples", from, to) };
+  }
+
+  function filenameFor(what, from, to) {
+    return "nursery-" + what + "_" + isoDay(from) + "_to_" + isoDay(to) + ".csv";
+  }
+
   function renderAll() {
-    renderControls();
     renderHeader();
-    renderAlerts();
-    renderDetail();
-    renderPanels();
-    renderLab();
-    renderTable();
+    renderViews();
+    if (state.view === "sensor") {
+      renderControls();
+      renderAlerts();
+      renderDetail();
+      renderPanels();
+      renderTable();
+      buildExport(el("export-sensor"), "sensor");
+    } else {
+      renderLab();
+      renderInsituCharts();
+      buildExport(el("export-insitu"), "insitu");
+    }
   }
 
   function start(data) {
