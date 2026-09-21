@@ -994,10 +994,16 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     if (spotChecks(device.sump, state.param).length) {
       legendItem("var(--surface)", "in-situ spot sample");
     }
-    if (def.band) legendItem("var(--band)", "working range " + def.band[0] + "–" + def.band[1] + (def.unit ? " " + def.unit : ""));
     if (def.hard) legendItem("var(--critical)", "hard limit");
 
-    drawChart(device, def);
+    // The chart decides the axis, so it is the chart that knows whether the
+    // working range fits inside it. Its legend entry is added afterwards.
+    var drawn = drawChart(device, def);
+    if (def.band) {
+      legendItem("var(--band)", "working range " + def.band[0] + "–" + def.band[1] +
+        (def.unit ? " " + def.unit : "") +
+        (drawn && drawn.bandBeyond ? " · " + drawn.bandBeyond + " beyond this view" : ""));
+    }
   }
 
   function drawChart(device, def) {
@@ -1015,18 +1021,39 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       var t = svg("text", { x: W / 2, y: H / 2, "text-anchor": "middle", fill: "var(--muted)", "font-size": "13" });
       t.textContent = daily
         ? "Not enough daily statistics in this window."
-        : "No raw readings in this window — raw data covers the last " + (state.data.window_days ? "" : "") + "30 days; switch to daily mean for longer.";
+        : "No raw readings in this window. Raw data covers the last 30 days; switch to daily mean for longer.";
       node.appendChild(t);
-      return;
+      return null;
     }
 
+    // The axis follows the data, not the working range. Free ammonia varies
+    // across a thousandth of a mg/L inside a band sixteen times wider, and
+    // stretching the axis to hold the whole band flattened it to a line. The
+    // band is still drawn, clipped to whatever part of it is on screen, and
+    // the legend says when it runs past the edge.
     var lo = Infinity, hi = -Infinity, t0 = series[0].t, t1 = series[series.length - 1].t;
     series.forEach(function (p) {
       var vals = daily ? [p.min, p.max, p.mean - p.sd, p.mean + p.sd] : [p.v];
       vals.forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
     });
-    if (def.band) { lo = Math.min(lo, def.band[0]); hi = Math.max(hi, def.band[1]); }
-    if (hi === lo) { hi += 1; lo -= 1; }
+
+    // Never zoom past the resolution of the instrument: a flat trace should
+    // read as flat, not as magnified rounding noise.
+    var step = Math.pow(10, -(def.precision || 0));
+    var minSpan = step * 4;
+    if (hi - lo < minSpan) {
+      var mid = (hi + lo) / 2;
+      lo = mid - minSpan / 2;
+      hi = mid + minSpan / 2;
+    }
+
+    // Pull in a band edge only when it is close enough to cost little.
+    if (def.band) {
+      var dataSpan = hi - lo;
+      if (def.band[0] > lo - dataSpan * 0.6 && def.band[0] < lo) lo = def.band[0];
+      if (def.band[1] < hi + dataSpan * 0.6 && def.band[1] > hi) hi = def.band[1];
+    }
+
     var padV = (hi - lo) * 0.08;
     lo -= padV; hi += padV;
     if (t1 === t0) t1 = t0 + 1;
@@ -1034,13 +1061,21 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     var x = function (tv) { return m.left + (tv - t0) / (t1 - t0) * (W - m.left - m.right); };
     var y = function (v) { return H - m.bottom - (v - lo) / (hi - lo) * (H - m.top - m.bottom); };
 
-    // working range band
+    // working range band, clipped to the visible axis
+    var bandVisible = false, bandBeyond = null;
     if (def.band) {
-      var yT = y(def.band[1]), yB = y(def.band[0]);
-      node.appendChild(svg("rect", {
-        x: m.left, y: Math.min(yT, yB), width: W - m.left - m.right,
-        height: Math.abs(yB - yT), fill: "var(--band)"
-      }));
+      var bTop = Math.min(def.band[1], hi), bBottom = Math.max(def.band[0], lo);
+      if (bTop > bBottom) {
+        bandVisible = true;
+        var yT = y(bTop), yB = y(bBottom);
+        node.appendChild(svg("rect", {
+          x: m.left, y: Math.min(yT, yB), width: W - m.left - m.right,
+          height: Math.abs(yB - yT), fill: "var(--band)"
+        }));
+      }
+      if (def.band[1] > hi && def.band[0] < lo) bandBeyond = "both ends";
+      else if (def.band[1] > hi) bandBeyond = "upper limit";
+      else if (def.band[0] < lo) bandBeyond = "lower limit";
     }
 
     // y grid + labels: only as many decimals as the tick step needs
@@ -1161,6 +1196,8 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     }));
 
     attachHover(node, series, { x: x, y: y, m: m, W: W, H: H, daily: daily, def: def });
+
+    return { bandVisible: bandVisible, bandBeyond: bandBeyond, lo: lo, hi: hi };
   }
 
   function attachHover(node, series, geo) {
