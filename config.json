@@ -104,7 +104,7 @@
 
   "nutrients": {
     "_comment": "In-situ samples taken by hand at the sumps, on different instruments from the Seneye probes. Read live from the Google Sheet on every run: paste the sheet's URL below, and in Sheets use File > Share > Publish to web > Nutrient > Comma-separated values so the harvester can read it without a login. Rows are matched to sumps by the Tank ID column (A12 -> SA12) and keyed on date + sump, so a corrected sheet overwrites the old values rather than duplicating them. If the fetch fails the stored samples are left untouched and data/nutrients.xlsx is used if present.",
-    "sheet_url": "https://docs.google.com/spreadsheets/d/1x24c0MoK4xBdtODkkm0a-XC9qbRFeO4O/edit?gid=0",
+    "sheet_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS1m0jTUzyvyRZsUb-nCuRp5u3TtrWodfbNy3Y0FYeVuwmZYS9ELIS0t6fKGqm-eAUhgLmSJY844bxY/pub?gid=1845791900&single=true&output=csv",
     "workbook": "data/nutrients.xlsx",
     "sheet": "Nutrient",
     "cache": "data/nutrients_latest.csv",
