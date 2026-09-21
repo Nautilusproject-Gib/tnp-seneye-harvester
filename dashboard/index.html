@@ -16,7 +16,8 @@
   --ink:#0b1f24;
   --ink-2:#4a5f66;
   --muted:#7b8e94;
-  --sd-wash:rgba(123,142,148,.15);
+  --sd-wash:rgba(123,142,148,.22);
+  --band-line:rgba(15,125,140,.55);
   --grid:#dfe8e9;
   --rule:#c9d7d9;
   --accent:#0f7d8c;
@@ -46,7 +47,9 @@
     --ink:#eaf3f4;
     --ink-2:#adc1c5;
     --muted:#7f9498;
-    --sd-wash:rgba(127,148,152,.20);
+    --sd-wash:rgba(127,148,152,.26);
+  --band-line:rgba(47,167,182,.60);
+    --band-line:rgba(47,167,182,.60);
     --grid:#1f3237;
     --rule:#2a3f44;
     --accent:#2fa7b6;
@@ -75,7 +78,7 @@
   --ink:#eaf3f4;
   --ink-2:#adc1c5;
   --muted:#7f9498;
-  --sd-wash:rgba(127,148,152,.20);
+  --sd-wash:rgba(127,148,152,.26);
   --grid:#1f3237;
   --rule:#2a3f44;
   --accent:#2fa7b6;
@@ -694,23 +697,38 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
                             : "Slide replacement " + slideWords(soonest.days));
     strip.appendChild(headline);
 
-    // Group by due date so nine identical dates read as "all nine sumps"
-    // rather than nine lines saying the same thing.
+    // Group by the DAY a slide is due, not by the exact second. The sensors
+    // report their expiries a second or two apart, so keying on the timestamp
+    // turned nine sumps that all expire on the same afternoon into nine
+    // separate groups, listed in whatever order they came back in.
     var groups = [], seen = {};
     entries.forEach(function (e) {
-      var key = String(e.slide.due);
-      if (!seen[key]) { seen[key] = { due: e.slide.due, sumps: [] }; groups.push(seen[key]); }
+      var key = fmtDate(e.slide.due);
+      if (!seen[key]) {
+        seen[key] = { due: e.slide.due, label: key, sumps: [] };
+        groups.push(seen[key]);
+      }
+      seen[key].due = Math.min(seen[key].due, e.slide.due);
       seen[key].sumps.push(e.device.sump || e.device.device_id);
+    });
+    // Soonest first, and the sumps within a group in their own order, so the
+    // same set of slides always reads the same way round.
+    groups.sort(function (a, b) { return a.due - b.due; });
+    groups.forEach(function (g) {
+      g.sumps.sort(function (a, b) {
+        return String(a).localeCompare(String(b), undefined,
+                                       { numeric: true, sensitivity: "base" });
+      });
     });
 
     var where = document.createElement("span");
     where.className = "where";
     if (groups.length === 1) {
       where.textContent = "all " + groups[0].sumps.length + " sumps, due " +
-        fmtDate(groups[0].due);
+        groups[0].label;
     } else {
       where.textContent = groups.slice(0, 3).map(function (g) {
-        return g.sumps.join(", ") + " " + fmtDate(g.due);
+        return g.sumps.join(", ") + " " + g.label;
       }).join("  ·  ") + (groups.length > 3 ? "  ·  +" + (groups.length - 3) + " more" : "");
     }
     strip.appendChild(where);
@@ -967,53 +985,83 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
   // A rolling +/-1 SD envelope that follows the trace, rather than one flat
   // band across the whole chart. At each reading the mean and standard
-  // deviation are taken over its neighbours within ROLL_FRACTION of the
-  // visible period, so the band widens where the water is swinging about and
-  // narrows where it is steady. That is the thing worth seeing; a flat band
-  // only restates the number already printed above the chart.
-  var ROLL_FRACTION = 0.1;   // window width as a share of the visible period
-  var ROLL_MIN_POINTS = 3;   // fewer than this in a window is not a spread
-  var ROLL_MIN_SERIES = 12;  // and too few points overall is just noise
+  // deviation are taken over its neighbours, so the band widens where the
+  // water is swinging about and narrows where it is steady. That is the thing
+  // worth seeing; a flat band only restates the number printed above it.
+  //
+  // Window size is set by how many readings there are, not by how long the
+  // period is. A record a few hours old has a dozen readings in it: a window
+  // defined as a tenth of the period would hold one of them, and the envelope
+  // would refuse to draw at all. Counting points instead means the band works
+  // on the first afternoon of data and still smooths sensibly once there is a
+  // year of it.
+  var ROLL_MIN_SERIES = 6;    // fewer readings than this is not a series yet
+  var ROLL_MIN_WINDOW = 3;    // fewest readings an SD is worth taking over
+  var ROLL_DIVISOR = 8;       // window is a this-th of the series, within reason
+  var ROLL_MAX_WINDOW = 240;
 
   function rollingSd(points) {
-    if (!points || points.length < ROLL_MIN_SERIES) return null;
-    var t0 = points[0].t, t1 = points[points.length - 1].t;
-    var span = (t1 - t0) * ROLL_FRACTION;
-    if (!(span > 0)) return null;
-    var half = span / 2;
+    var n = points ? points.length : 0;
+    if (n < ROLL_MIN_SERIES) return null;
+
+    var w = Math.max(ROLL_MIN_WINDOW,
+                     Math.min(Math.round(n / ROLL_DIVISOR), ROLL_MAX_WINDOW, n));
+
+    // Over several days, round the window to whole days. The water runs on a
+    // daily cycle, and a window that is three and three-quarter days long
+    // takes in three and three-quarter cycles, so the amount of that cycle
+    // inside it rises and falls as the window slides. That puts a scalloped
+    // ripple along the edge of the band which is an artefact of the window,
+    // not something happening in the tanks. A whole number of days takes in
+    // the same amount of cycle wherever it sits.
+    var gaps = [], k;
+    for (k = 1; k < n; k++) gaps.push(points[k].t - points[k - 1].t);
+    gaps.sort(function (a, b) { return a - b; });
+    var interval = gaps[Math.floor(gaps.length / 2)];
+    if (interval > 0) {
+      var perDay = 86400 / interval;
+      if (perDay >= 4 && n >= perDay * 2) {
+        var days = Math.max(1, Math.round(w / perDay));
+        w = Math.min(Math.round(days * perDay), n);
+      }
+    }
 
     // Values are shifted by the series mean before squaring. Squaring raw pH
     // values around 8 and subtracting loses most of the precision in a
     // variance of a few thousandths.
-    var total = 0;
-    points.forEach(function (p) { total += p.v; });
-    var shift = total / points.length;
+    var total = 0, i;
+    for (i = 0; i < n; i++) total += points[i].v;
+    var shift = total / n;
 
-    var upper = [], lower = [], lo = 0, hi = 0, sum = 0, sumsq = 0, covered = 0;
-    for (var i = 0; i < points.length; i++) {
-      while (hi < points.length && points[hi].t <= points[i].t + half) {
-        var add = points[hi].v - shift;
-        sum += add; sumsq += add * add; hi++;
-      }
-      while (points[lo].t < points[i].t - half) {
-        var drop = points[lo].v - shift;
-        sum -= drop; sumsq -= drop * drop; lo++;
-      }
-      var n = hi - lo;
-      if (n < ROLL_MIN_POINTS) { upper.push(null); lower.push(null); continue; }
-      var mean = sum / n;
-      var variance = (sumsq - n * mean * mean) / (n - 1);
-      if (!(variance > 0)) { upper.push(null); lower.push(null); continue; }
-      var sd = Math.sqrt(variance);
+    // Prefix sums, so each window costs the same however wide it is.
+    var sum = [0], sumsq = [0];
+    for (i = 0; i < n; i++) {
+      var d = points[i].v - shift;
+      sum.push(sum[i] + d);
+      sumsq.push(sumsq[i] + d * d);
+    }
+
+    var half = Math.floor(w / 2);
+    var upper = [], lower = [], spans = [];
+    for (i = 0; i < n; i++) {
+      // Slide the window inward at the ends rather than letting it shrink, so
+      // the first and last readings are not given a spuriously narrow band.
+      var from = Math.max(0, Math.min(i - half, n - w));
+      var to = from + w;
+      var mean = (sum[to] - sum[from]) / w;
+      var variance = ((sumsq[to] - sumsq[from]) - w * mean * mean) / (w - 1);
+      // No variation at all is zero spread, not unknown spread, so the
+      // envelope pinches to the line rather than breaking.
+      var sd = variance > 0 ? Math.sqrt(variance) : 0;
       var centre = mean + shift;
       upper.push({ t: points[i].t, v: centre + sd });
       lower.push({ t: points[i].t, v: centre - sd });
-      covered++;
+      spans.push(points[to - 1].t - points[from].t);
     }
-    // A band with holes through most of it reads as a mistake, so it is all
-    // or nothing.
-    if (covered < points.length * 0.6) return null;
-    return { upper: upper, lower: lower, span: span };
+
+    spans.sort(function (a, b) { return a - b; });
+    return { upper: upper, lower: lower, points: w,
+             span: spans[Math.floor(spans.length / 2)] };
   }
 
   // One closed path from the top edge out and the bottom edge back, split
@@ -1100,22 +1148,29 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
     var def = paramDef(state.param);
     if (def.band) {
-      var yTop = Math.max(0, geo.y(def.band[1])), yBot = Math.min(H, geo.y(def.band[0]));
-      if (yBot > yTop) {
-        node.appendChild(svg("rect", { x: 0, y: yTop, width: W, height: yBot - yTop, fill: "var(--band)" }));
-      }
+      [def.band[0], def.band[1]].forEach(function (v) {
+        if (v < geo.lo || v > geo.hi) return;
+        node.appendChild(svg("line", {
+          x1: 0, x2: W, y1: geo.y(v), y2: geo.y(v), stroke: "var(--band-line)",
+          "stroke-width": "0.75", "stroke-dasharray": "4 3",
+          "vector-effect": "non-scaling-stroke"
+        }));
+      });
     }
+    // Paint order matters here. The rolling +/-1 SD envelope has to go on top
+    // of the working-range band and under the trace: at every parameter but
+    // temperature the working range covers the whole sparkline, and an
+    // envelope drawn beneath it is invisible in practice.
+    var stats = summarise(pts);
+    var band = stats ? sdEnvelope(pts, geo.x, geo.y, geo.lo, geo.hi) : null;
+    if (band) node.appendChild(band.node);
+
     node.appendChild(svg("path", {
       d: geo.d, fill: "none", stroke: "var(--series)", "stroke-width": "1.6",
       "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke"
     }));
-    // mean line, so the shape of the trace has something to sit against,
-    // sitting in a +/-1 SD band so the spread is visible and not only stated
-    var stats = summarise(pts);
+    // mean line, so the shape of the trace has something to sit against
     if (stats) {
-      var band = sdEnvelope(pts, geo.x, geo.y, geo.lo, geo.hi);
-      // Behind everything already drawn, so the trace stays legible over it.
-      if (band) node.insertBefore(band.node, node.firstChild);
       node.appendChild(svg("line", {
         x1: 0, x2: W, y1: geo.y(stats.mean), y2: geo.y(stats.mean),
         stroke: "var(--muted)", "stroke-width": "0.75", "stroke-dasharray": "3 3",
@@ -1443,9 +1498,10 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
         "\u00b11 SD, rolling " + spanWords(drawn.rollSpan));
     }
     if (def.band) {
-      legendItem("var(--band)", "working range " + def.band[0] + "–" + def.band[1] +
+      legendItem("var(--band-line)", "working range " + def.band[0] + "–" + def.band[1] +
         (def.unit ? " " + def.unit : "") +
-        (drawn && drawn.bandBeyond ? " · " + drawn.bandBeyond + " beyond this view" : ""));
+        (drawn && drawn.bandBeyond ? " · " + drawn.bandBeyond + " beyond this view" : ""),
+        null, true);
     }
   }
 
@@ -1505,18 +1561,21 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     var x = function (tv) { return m.left + (tv - t0) / (t1 - t0) * (W - m.left - m.right); };
     var y = function (v) { return H - m.bottom - (v - lo) / (hi - lo) * (H - m.top - m.bottom); };
 
-    // working range band, clipped to the visible axis
+    // Working range as a dashed line at each limit rather than a block of
+    // colour. The limits are two thresholds, not a distribution, and shading
+    // between them spends the one visual channel the rolling SD needs: a wash
+    // over a wash is a wash. Lines for thresholds, shading for spread, and
+    // neither hides the other.
     var bandVisible = false, bandBeyond = null;
     if (def.band) {
-      var bTop = Math.min(def.band[1], hi), bBottom = Math.max(def.band[0], lo);
-      if (bTop > bBottom) {
+      [def.band[0], def.band[1]].forEach(function (v) {
+        if (v < lo || v > hi) return;
         bandVisible = true;
-        var yT = y(bTop), yB = y(bBottom);
-        node.appendChild(svg("rect", {
-          x: m.left, y: Math.min(yT, yB), width: W - m.left - m.right,
-          height: Math.abs(yB - yT), fill: "var(--band)"
+        node.appendChild(svg("line", {
+          x1: m.left, x2: W - m.right, y1: y(v), y2: y(v),
+          stroke: "var(--band-line)", "stroke-width": "1", "stroke-dasharray": "7 4"
         }));
-      }
+      });
       if (def.band[1] > hi && def.band[0] < lo) bandBeyond = "both ends";
       else if (def.band[1] > hi) bandBeyond = "upper limit";
       else if (def.band[0] < lo) bandBeyond = "lower limit";
@@ -2065,10 +2124,11 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     head.appendChild(h2);
     var sub = document.createElement("p");
     sub.textContent = def.typical
-      ? "Shaded band is typical local seawater, " + def.typical[0] + "\u2013" +
+      ? "Dashed lines mark typical local seawater, " + def.typical[0] + "\u2013" +
         def.typical[1] + (def.unit ? " " + def.unit : "") + "."
       : "No seawater reference set for this analyte.";
-    sub.textContent += " Dashed rule is each sump's mean across every sample.";
+    sub.textContent += " Shading is each sump's rolling \u00b11 SD, and the fine "
+      + "rule its mean across every sample.";
     head.appendChild(sub);
     host.appendChild(head);
 
@@ -2144,11 +2204,14 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       var y = function (v) { return H - padY - (v - lo) / (hi - lo) * (H - 2 * padY); };
 
       if (def.typical) {
-        var yTop = y(Math.min(def.typical[1], hi)), yBot = y(Math.max(def.typical[0], lo));
-        node.appendChild(svg("rect", {
-          x: 0, y: Math.min(yTop, yBot), width: W, height: Math.abs(yBot - yTop),
-          fill: "var(--band)"
-        }));
+        [def.typical[0], def.typical[1]].forEach(function (v) {
+          if (v < lo || v > hi) return;
+          node.appendChild(svg("line", {
+            x1: 0, x2: W, y1: y(v), y2: y(v), stroke: "var(--band-line)",
+            "stroke-width": "0.75", "stroke-dasharray": "4 3",
+            "vector-effect": "non-scaling-stroke"
+          }));
+        });
       }
 
       // Mean across this sump's samples, the same dashed rule the sensor
