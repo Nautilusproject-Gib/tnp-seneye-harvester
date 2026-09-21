@@ -111,6 +111,26 @@
     "method_note": "In-situ spot samples: handheld meters and test kits, read by eye. Accuracy and resolution differ from the Seneye probes, so the two are shown as separate measurements and never averaged together."
   },
 
+  "maintenance": {
+    "_comment": "Issue tracking and planned jobs for anyone working at the nursery. Two tabs in the maintenance sheet: one row per fault, one row per recurring job. This log names people, so it is NOT published with the student dashboard: the board is written to board/ which the Pages workflow does not upload and .gitignore keeps out of the repo. Disabled for now: the maintenance log lives in Google until a private repo is available. Set enabled to true to start building the board, and publish to true only once you have decided that the log can be public, or set anonymise to true to strip names from the export.",
+    "enabled": false,
+    "publish": false,
+    "anonymise": false,
+    "out": "board/data/maintenance.json",
+    "workbook": "data/nutrients.xlsx",
+    "issues": {
+      "_comment": "gid is the number after gid= in the tab's URL. Publish this tab to the web as CSV the same way as the Nutrient tab.",
+      "sheet_url": "",
+      "gid": null,
+      "sheet": "Maintenance"
+    },
+    "schedule": {
+      "sheet_url": "",
+      "gid": null,
+      "sheet": "Schedule"
+    }
+  },
+
   "export": {
     "window_days": 365,
     "raw_days": 30
