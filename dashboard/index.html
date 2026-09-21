@@ -30,6 +30,11 @@
   --offline:#7b8e94;
   --shadow:0 1px 2px rgba(11,31,36,.06), 0 6px 18px rgba(11,31,36,.05);
   --ring:rgba(11,31,36,.10);
+  --ok-ink:#0b6b0b;
+  --near-ink:#8a5b00;
+  --near-wash:rgba(250,178,25,.13);
+  --far-ink:#b32a2a;
+  --far-wash:rgba(208,59,59,.11);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -53,6 +58,11 @@
     --critical:#e06a6a;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
     --ring:rgba(255,255,255,.10);
+  --ok-ink:#3ec13e;
+    --near-ink:#e0a21a;
+    --near-wash:rgba(250,178,25,.16);
+    --far-ink:#ef8a8a;
+    --far-wash:rgba(224,106,106,.16);
   }
 }
 :root[data-theme="dark"]{
@@ -76,6 +86,11 @@
   --critical:#e06a6a;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   --ring:rgba(255,255,255,.10);
+  --ok-ink:#3ec13e;
+  --near-ink:#e0a21a;
+  --near-wash:rgba(250,178,25,.16);
+  --far-ink:#ef8a8a;
+  --far-wash:rgba(224,106,106,.16);
 }
 
 *{box-sizing:border-box}
@@ -205,8 +220,31 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .lab-head h2{margin:0;font-size:15px;font-weight:600}
 .lab-sub{margin:2px 0 0;font-size:12.5px;color:var(--ink-2)}
 .lab-note{margin:0;padding:10px 16px;font-size:12px;color:var(--muted);border-top:1px solid var(--grid)}
-td.lab-cell{position:relative}
-td.lab-cell[data-out="true"]{color:var(--critical);font-weight:600}
+.analyte-tabs{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.analyte-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.group-label{
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);white-space:nowrap;
+}
+@media (max-width:700px){
+  .analyte-tabs{align-items:stretch;width:100%}
+  .analyte-group{justify-content:flex-start}
+}
+td.lab-cell{position:relative;white-space:nowrap}
+td.lab-cell .mark{font-size:9px;margin-left:5px;vertical-align:1px}
+td.lab-cell.typical{color:var(--ok-ink)}
+td.lab-cell.near{color:var(--near-ink);font-weight:500;background:var(--near-wash)}
+td.lab-cell.far{color:var(--far-ink);font-weight:600;background:var(--far-wash)}
+.lab-legend{
+  display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;
+  padding:0 16px 12px;font-size:12px;color:var(--ink-2);
+}
+.lab-legend .key{display:inline-flex;align-items:center;gap:6px}
+.lab-legend .key-dot{font-size:10px;width:12px;text-align:center}
+.lab-legend .key.typical .key-dot{color:var(--ok-ink)}
+.lab-legend .key.near .key-dot{color:var(--near-ink)}
+.lab-legend .key.far .key-dot{color:var(--far-ink)}
+.lab-legend .key-basis{color:var(--muted);flex:1 1 100%;font-size:11.5px}
 .lab .table-scroll{border-top:1px solid var(--rule)}
 
 /* table */
@@ -299,8 +337,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
         <h2>In-situ samples</h2>
         <p class="lab-sub" id="lab-sub"></p>
       </div>
-      <div class="segmented" id="analyte-tabs" role="group" aria-label="Analyte"></div>
+      <div class="analyte-tabs" id="analyte-tabs"></div>
     </div>
+    <div class="lab-legend" id="lab-legend"></div>
     <div class="table-scroll">
       <table id="lab-table">
         <thead></thead>
@@ -1017,6 +1056,53 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     });
   }
 
+  // Three levels against the seawater reference in config.json. The mark is a
+  // shape, not just a colour, so the table still reads in greyscale or for a
+  // colourblind viewer.
+  var LEVELS = {
+    typical: { mark: "", label: "typical of local seawater" },
+    near: { mark: "△", label: "outside typical, not far out" },
+    far: { mark: "■", label: "well outside typical" },
+    unknown: { mark: "", label: "no reference range set" }
+  };
+
+  function classify(value, def) {
+    if (value === null || value === undefined || !def.typical) {
+      return { level: "unknown", mark: "", title: LEVELS.unknown.label };
+    }
+    var t = def.typical, o = def.outer;
+    var range = " (typical " + t[0] + "–" + t[1] + (def.unit ? " " + def.unit : "") + ")";
+    if (value >= t[0] && value <= t[1]) {
+      return { level: "typical", mark: "", title: LEVELS.typical.label + range };
+    }
+    if (o && value >= o[0] && value <= o[1]) {
+      return { level: "near", mark: LEVELS.near.mark, title: LEVELS.near.label + range };
+    }
+    return { level: "far", mark: LEVELS.far.mark, title: LEVELS.far.label + range };
+  }
+
+  function renderLegend(def) {
+    var box = el("lab-legend");
+    box.textContent = "";
+    if (!def.typical) return;
+    ["typical", "near", "far"].forEach(function (level) {
+      var item = document.createElement("span");
+      item.className = "key " + level;
+      var dot = document.createElement("span");
+      dot.className = "key-dot";
+      dot.textContent = LEVELS[level].mark || "●";
+      item.appendChild(dot);
+      item.appendChild(document.createTextNode(LEVELS[level].label));
+      box.appendChild(item);
+    });
+    if (def.basis) {
+      var basis = document.createElement("span");
+      basis.className = "key-basis";
+      basis.textContent = def.basis;
+      box.appendChild(basis);
+    }
+  }
+
   function renderLab() {
     var box = el("lab");
     var data = nutrients();
@@ -1029,12 +1115,39 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     var def = null;
     data.analytes.forEach(function (a) { if (a.key === state.analyte) def = a; });
 
-    buildSegmented(
-      el("analyte-tabs"),
-      data.analytes.map(function (a) { return { key: a.key, label: a.label }; }),
-      state.analyte,
-      function (key) { state.analyte = key; renderLab(); }
-    );
+    // Physical and chemical measurements get their own labelled row, so a
+    // temperature chip never sits in a line of nutrient chemistry.
+    var tabs = el("analyte-tabs");
+    tabs.textContent = "";
+    var groups = data.groups && data.groups.length
+      ? data.groups
+      : [{ key: null, label: null }];
+    groups.forEach(function (group) {
+      var members = data.analytes.filter(function (a) {
+        return group.key === null || a.group === group.key;
+      });
+      if (!members.length) return;
+      var row = document.createElement("div");
+      row.className = "analyte-group";
+      if (group.label) {
+        var caption = document.createElement("span");
+        caption.className = "group-label";
+        caption.textContent = group.label;
+        row.appendChild(caption);
+      }
+      var seg = document.createElement("div");
+      seg.className = "segmented";
+      seg.setAttribute("role", "group");
+      if (group.label) seg.setAttribute("aria-label", group.label + " measurements");
+      buildSegmented(
+        seg,
+        members.map(function (a) { return { key: a.key, label: a.label }; }),
+        state.analyte,
+        function (key) { state.analyte = key; renderLab(); }
+      );
+      row.appendChild(seg);
+      tabs.appendChild(row);
+    });
 
     var dates = [], seen = {};
     data.samples.forEach(function (s) {
@@ -1086,13 +1199,10 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     });
     thead.appendChild(hr);
 
-    // A parameter that the Seneye also measures has a band; reuse it here so
-    // an out-of-range spot check is marked the same way as a sensor reading.
     var bandDef = null;
     for (var pk in SPOT_EQUIVALENT) {
       if (SPOT_EQUIVALENT[pk] === state.analyte) bandDef = paramDef(pk);
     }
-    var band = bandDef ? bandDef.band : null;
 
     sumps.forEach(function (sump) {
       var tr = document.createElement("tr");
@@ -1108,21 +1218,34 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
           td.style.color = "var(--muted)";
         } else {
           var v = s.values[state.analyte];
+          var verdict = classify(v, def);
+          td.className = "lab-cell " + verdict.level;
           td.textContent = fmt(v, def.precision);
-          if (band && (v < band[0] || v > band[1])) {
-            td.setAttribute("data-out", "true");
-            td.title = "outside the working range " + band[0] + "–" + band[1];
+          if (verdict.mark) {
+            var mark = document.createElement("span");
+            mark.className = "mark";
+            mark.textContent = verdict.mark;
+            mark.setAttribute("aria-hidden", "true");
+            td.appendChild(mark);
           }
+          td.title = verdict.title;
         }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     });
 
+    renderLegend(def);
+
     var note = (state.data.method_note ||
       "Taken by hand at the sumps with handheld meters and test kits.") +
       (def.unit ? " Values in " + def.unit + "." : "") +
       " One sample per sump; a dot means this analyte was not measured that round.";
+    if (def.typical) {
+      note += " Colours compare each value with ordinary local seawater, not with " +
+        "what the plants need; a red cell is a prompt to check the reading and the " +
+        "test kit rather than evidence of a problem.";
+    }
     if (bandDef) {
       note += " Where the Seneye measures the same quantity, these samples are drawn " +
         "on its chart as hollow diamonds for comparison. The two use different " +
