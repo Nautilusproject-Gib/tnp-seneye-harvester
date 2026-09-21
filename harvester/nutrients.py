@@ -354,12 +354,8 @@ def parse_workbook(path: str, sumps: dict[str, Any] | None = None,
     return build_records(read_workbook_rows(path, sheet_name), sumps)
 
 
-def parse_csv(text: str, sumps: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Read a CSV export of the sheet into sample records.
-
-    Google serves dates already formatted (13/08/2026), so no serial-number
-    conversion is involved on this path; _excel_date handles both anyway.
-    """
+def parse_csv_rows(text: str) -> list[dict[str, str]]:
+    """CSV text into positional rows, the same shape read_workbook_rows gives."""
     reader = csv.reader(io.StringIO(text))
     rows: list[dict[str, str]] = []
     for values in reader:
@@ -370,6 +366,16 @@ def parse_csv(text: str, sumps: dict[str, Any] | None = None) -> list[dict[str, 
                 row[str(index)] = value
         if row:
             rows.append(row)
+    return rows
+
+
+def parse_csv(text: str, sumps: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Read a CSV export of the sheet into sample records.
+
+    Google serves dates already formatted (13/08/2026), so no serial-number
+    conversion is involved on this path; _excel_date handles both anyway.
+    """
+    rows = parse_csv_rows(text)
     if not rows:
         raise NutrientError("the sheet export was empty")
     return build_records(rows, sumps)
@@ -398,9 +404,21 @@ def fetch_sheet_csv(url: str, timeout: int = 30) -> str:
             payload = response.read()
             final = response.geturl()
     except urllib.error.HTTPError as exc:
+        hint = ""
+        if exc.code == 400:
+            hint = (
+                " A 400 usually means the file is an uploaded .xlsx rather than "
+                "a native Google Sheet (its URL carries rtpof=true). Open it and "
+                "use File > Save as Google Sheets, then publish that copy and put "
+                "its URL in config.json."
+            )
+        elif exc.code in (401, 403, 404):
+            hint = (
+                " Check the tab is published: File > Share > Publish to web, pick "
+                "the tab, choose Comma-separated values (.csv), Publish."
+            )
         raise NutrientError(
-            f"Google returned HTTP {exc.code} for the sheet. If it is not "
-            "published to the web, the harvester cannot read it."
+            f"Google returned HTTP {exc.code} for the sheet.{hint}"
         ) from exc
     except urllib.error.URLError as exc:
         raise NutrientError(f"could not reach Google Sheets: {exc}") from exc
@@ -474,6 +492,15 @@ def load(store, config: dict[str, Any], root: str) -> int:
         if os.path.exists(workbook):
             records = parse_workbook(workbook, sumps, nutrient_cfg.get("sheet", "Nutrient"))
             source = "workbook"
+        elif url:
+            # Be precise about which of the two routes failed: a fetch that
+            # errored is a different problem from never having been set up.
+            print(
+                "nutrients: the sheet could not be read and there is no "
+                f"{nutrient_cfg.get('workbook', 'data/nutrients.xlsx')} to fall "
+                "back on, so stored samples are left as they are"
+            )
+            return 0
         else:
             print("nutrients: no sheet URL configured and no workbook on disk, skipping")
             return 0
