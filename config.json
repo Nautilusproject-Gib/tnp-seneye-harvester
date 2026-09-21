@@ -31,7 +31,7 @@
 
   "devices": {
     "_comment": "Seneye device id -> the sump it monitors, read from GET /v1/devices on 21 Sept 2026. The system letter, tank list and label are looked up from the sump. If a unit is moved, change its sump here; readings already stored keep the mapping they were collected under.",
-   "168779": { "sump": "SA12" },
+    "168779": { "sump": "SA12" },
     "166115": { "sump": "SA345" },
     "165185": { "sump": "SB12" },
     "162893": { "sump": "SB34" },
@@ -43,27 +43,27 @@
   },
 
   "parameters": {
-    "_comment": "band = the nursery's own working range (shown green). hard = the range outside which a reading is flagged critical. These are operator set points for the TNP nursery, not published tolerances - change them to match your protocol.",
+    "_comment": "band = the nursery's own working range (shaded on the charts). hard = the range outside which a reading is flagged critical; null means no critical threshold set. Temperature, pH and NH3 are TNP set points supplied by Lewis Stagnetto, 21 Sept 2026. They are operating set points for this nursery, not published tolerances for Posidonia oceanica.",
     "temperature": {
       "label": "Temperature",
       "unit": "°C",
       "precision": 2,
-      "band": [18.0, 24.0],
-      "hard": [15.0, 27.0]
+      "band": [13.0, 20.0],
+      "hard": null
     },
     "ph": {
       "label": "pH",
       "unit": "",
       "precision": 2,
-      "band": [7.9, 8.3],
-      "hard": [7.6, 8.6]
+      "band": [7.5, 8.5],
+      "hard": null
     },
     "nh3": {
       "label": "Free ammonia (NH₃)",
       "unit": "mg/L",
       "precision": 3,
-      "band": [0.0, 0.02],
-      "hard": [0.0, 0.05]
+      "band": [0.0, 0.08],
+      "hard": null
     },
     "nh4": {
       "label": "Ammonium (NH₄⁺)",
@@ -76,8 +76,8 @@
       "label": "Dissolved oxygen",
       "unit": "mg/L",
       "precision": 2,
-      "band": [6.0, 10.0],
-      "hard": [4.0, 14.0]
+      "band": null,
+      "hard": null
     },
     "par": {
       "label": "PAR",
