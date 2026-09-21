@@ -111,6 +111,60 @@
     "method_note": "In-situ spot samples: handheld meters and test kits, read by eye. Accuracy and resolution differ from the Seneye probes, so the two are shown as separate measurements and never averaged together."
   },
 
+  "insitu_reference": {
+    "_comment": "Reference ranges for colouring the in-situ sample table. typical = ordinary local seawater (green). Between typical and outer is amber, meaning off typical but not alarming. Beyond outer is red. Derived from published seawater values for the western Mediterranean and Strait of Gibraltar and converted into the units this sheet uses; the workings and sources are in the README. These describe SEAWATER, not what Posidonia requires, and a red cell is a prompt to check the reading and the kit, not evidence of a problem. Phosphate, calcium and magnesium are read in ppm; in seawater 1 ppm is ~1.03 mg/L, so the same numbers serve for both and nothing is converted.",
+    "temp_c": {
+      "typical": [13.0, 20.0],
+      "outer": [11.0, 22.0],
+      "basis": "TNP nursery operating set points, not a seawater range"
+    },
+    "salinity_ppt": {
+      "typical": [35.0, 38.5],
+      "outer": [32.0, 41.0],
+      "basis": "Atlantic inflow ~36.2 to Mediterranean outflow ~38.4 at the Strait"
+    },
+    "ph": {
+      "typical": [8.0, 8.2],
+      "outer": [7.5, 8.5],
+      "basis": "surface ocean pH ~8.1; outer bounds are the nursery set points"
+    },
+    "dkh": {
+      "typical": [6.8, 8.0],
+      "outer": [5.0, 11.0],
+      "basis": "Mediterranean surface alkalinity 2500-2650 umol/kg = 7.2-7.6 dKH"
+    },
+    "no3": {
+      "typical": [0.0, 0.25],
+      "outer": [0.0, 1.0],
+      "basis": "western Mediterranean surface nitrate under ~4 umol/kg = 0.25 mg/L as NO3"
+    },
+    "no2": {
+      "typical": [0.0, 0.05],
+      "outer": [0.0, 0.2],
+      "basis": "upper-ocean nitrite 10-1000 nmol/L = up to ~0.046 mg/L as NO2"
+    },
+    "nh3": {
+      "typical": [0.0, 0.05],
+      "outer": [0.0, 0.2],
+      "basis": "surface ammonium typically under a few umol/L; check whether the kit reports total ammonia or free NH3"
+    },
+    "po4": {
+      "typical": [0.0, 0.05],
+      "outer": [0.0, 0.3],
+      "basis": "western Mediterranean surface phosphate ~0.16 umol/kg = 0.015 ppm as PO4"
+    },
+    "ca": {
+      "typical": [400.0, 455.0],
+      "outer": [360.0, 520.0],
+      "basis": "412 ppm at S=35, scaling with salinity to ~452 ppm at S=38.4"
+    },
+    "mg": {
+      "typical": [1250.0, 1420.0],
+      "outer": [1150.0, 1600.0],
+      "basis": "1290 ppm at S=35, scaling with salinity to ~1415 ppm at S=38.4"
+    }
+  },
+
   "maintenance": {
     "_comment": "Issue tracking and planned jobs for anyone working at the nursery. Two tabs in the maintenance sheet: one row per fault, one row per recurring job. This log names people, so it is NOT published with the student dashboard: the board is written to board/ which the Pages workflow does not upload and .gitignore keeps out of the repo. Disabled for now: the maintenance log lives in Google until a private repo is available. Set enabled to true to start building the board, and publish to true only once you have decided that the log can be public, or set anonymise to true to strip names from the export.",
     "enabled": false,
