@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import math
 import os
 import tempfile
 import sys
@@ -10,7 +11,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from harvester.export import _daily_stats, build_payload
+from harvester.export import _daily_stats, _slides, build_payload
 from harvester.seneye import parse_reading
 from harvester.store import Store
 
@@ -509,6 +510,77 @@ class TestDerivedValues(unittest.TestCase):
         self.assertNotIn("nh4", keys)
         self.assertNotIn("o2_sat", keys)
         store.close()
+
+
+class TestSlideCountdown(unittest.TestCase):
+    """When each sump's slide is due to be replaced."""
+
+    DEVICES = [{"device_id": "1", "sump_code": "SA12"},
+               {"device_id": "2", "sump_code": "SB34"}]
+    NOW = int(dt.datetime(2026, 9, 21, 12, 0, tzinfo=dt.timezone.utc).timestamp())
+    DUE_14_OCT = int(dt.datetime(2026, 10, 14, tzinfo=dt.timezone.utc).timestamp())
+
+    def slides(self, cfg, latest=None):
+        return _slides(self.DEVICES, latest or {}, {"slides": cfg}, self.NOW)
+
+    def test_logged_change_date_plus_the_interval(self):
+        out = self.slides({"interval_days": 30, "default_changed": "2026-09-14"})
+        self.assertEqual(out["1"]["due"], self.DUE_14_OCT)
+        self.assertEqual(out["1"]["source"], "logged")
+        # The 14th of September plus 30 days, read on the 21st, is 23 days off.
+        self.assertEqual(math.ceil((out["1"]["due"] - self.NOW) / 86400), 23)
+
+    def test_a_per_sump_date_overrides_the_default(self):
+        out = self.slides({"interval_days": 30, "default_changed": "2026-09-14",
+                           "changed": {"SB34": "2026-09-20", "_comment": "ignored"}})
+        self.assertEqual(out["1"]["due"], self.DUE_14_OCT)
+        self.assertGreater(out["2"]["due"], out["1"]["due"])
+
+    def test_the_sensor_expiry_wins_when_it_reports_one(self):
+        reported = self.NOW + 5 * 86400
+        out = self.slides({"interval_days": 30, "default_changed": "2026-09-14"},
+                          {"1": {"slide_expires": reported, "slide_serial": "SLD-1"}})
+        self.assertEqual(out["1"]["due"], reported)
+        self.assertEqual(out["1"]["source"], "sensor")
+        self.assertEqual(out["1"]["serial"], "SLD-1")
+        self.assertEqual(out["2"]["source"], "logged")
+
+    def test_an_absurd_sensor_expiry_is_ignored(self):
+        out = self.slides({"interval_days": 30, "default_changed": "2026-09-14"},
+                          {"1": {"slide_expires": 0}, "2": {"slide_expires": 4102444800}})
+        self.assertEqual(out["1"]["source"], "logged")
+        self.assertEqual(out["2"]["source"], "logged")
+
+    def test_trust_sensor_false_goes_by_the_logged_dates_only(self):
+        out = self.slides({"interval_days": 30, "default_changed": "2026-09-14",
+                           "trust_sensor": False},
+                          {"1": {"slide_expires": self.NOW + 5 * 86400}})
+        self.assertEqual(out["1"]["due"], self.DUE_14_OCT)
+
+    def test_no_date_anywhere_means_no_countdown_rather_than_a_guess(self):
+        self.assertEqual(self.slides({"interval_days": 30}), {})
+        self.assertEqual(self.slides({"default_changed": "not a date"}), {})
+
+    def test_can_be_switched_off(self):
+        self.assertEqual(
+            self.slides({"enabled": False, "default_changed": "2026-09-14"}), {})
+
+    def test_the_payload_carries_the_interval_and_warning_threshold(self):
+        store = Store("sqlite://:memory:")
+        store.migrate()
+        now = int(time.time())
+        store.upsert_device("1", "SA12", 1, "SA12", "A", "SA12", now)
+        store.insert_readings([{
+            "device_id": "1", "reading_time": now - 60, "fetched_at": now,
+            "temperature": 17.1, "ph": 7.98, "nh3": 0.005,
+        }])
+        payload = build_payload(store, {"slides": {
+            "interval_days": 30, "warn_days": 7, "default_changed": "2026-09-14"}})
+        self.assertEqual(payload["slides"]["interval_days"], 30)
+        self.assertEqual(payload["slides"]["warn_days"], 7)
+        self.assertIn("1", payload["slides"]["by_device"])
+        store.close()
+
 
 
 # --------------------------------------------------------------------------
