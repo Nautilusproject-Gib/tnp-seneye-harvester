@@ -226,12 +226,21 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .alert.offline .dot{background:var(--offline)}
 .alert.good .dot{background:var(--good)}
 
-/* system sections */
-.system{margin:0 0 26px}
+/* system sections: two across where the page is wide enough, one where it
+   is not, so the systems use the width instead of stacking down the page */
+.systems-grid{
+  display:grid;
+  /* min() keeps the track from forcing a 430px minimum on a narrow phone,
+     which would overflow the page rather than collapsing to one column */
+  grid-template-columns:repeat(auto-fit,minmax(min(440px,100%),1fr));
+  gap:8px 26px;
+  align-items:start;
+}
+.system{margin:0 0 18px;min-width:0}
 .system-head{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--rule)}
 .system-head h2{margin:0;font-size:14px;font-weight:600;letter-spacing:.02em}
 .system-head .note{font-size:12px;color:var(--muted)}
-.panels{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:12px}
+.panels{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr));gap:12px}
 
 .panel{
   background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:12px 13px 8px;
@@ -884,6 +893,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
   function renderPanels() {
     var host = el("systems");
     host.textContent = "";
+    host.className = "systems-grid";
     var devices = state.data.devices || [];
     if (!devices.length) {
       var e = document.createElement("div");
