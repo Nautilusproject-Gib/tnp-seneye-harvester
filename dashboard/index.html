@@ -16,6 +16,7 @@
   --ink:#0b1f24;
   --ink-2:#4a5f66;
   --muted:#7b8e94;
+  --sd-wash:rgba(123,142,148,.15);
   --grid:#dfe8e9;
   --rule:#c9d7d9;
   --accent:#0f7d8c;
@@ -45,6 +46,7 @@
     --ink:#eaf3f4;
     --ink-2:#adc1c5;
     --muted:#7f9498;
+    --sd-wash:rgba(127,148,152,.20);
     --grid:#1f3237;
     --rule:#2a3f44;
     --accent:#2fa7b6;
@@ -73,6 +75,7 @@
   --ink:#eaf3f4;
   --ink-2:#adc1c5;
   --muted:#7f9498;
+  --sd-wash:rgba(127,148,152,.20);
   --grid:#1f3237;
   --rule:#2a3f44;
   --accent:#2fa7b6;
@@ -900,6 +903,11 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       total += p.v;
     });
     var mean = total / points.length;
+    // Sample standard deviation, n-1. One point has no spread to report, and
+    // 0 would claim there is none rather than that it cannot be known.
+    var ss = 0;
+    points.forEach(function (p) { ss += (p.v - mean) * (p.v - mean); });
+    var sd = points.length > 1 ? Math.sqrt(ss / (points.length - 1)) : null;
     // Direction over the window: compare the first and last tenth, which is
     // steadier than first-point-to-last-point on noisy data.
     var edge = Math.max(1, Math.round(points.length / 10));
@@ -911,6 +919,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       min: lo,
       max: hi,
       mean: mean,
+      sd: sd,
       change: (last / edge) - (first / edge)
     };
   }
@@ -932,14 +941,45 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
         weighted += d.mean * d.n;
         n += d.n;
       });
-      return { mean: n ? weighted / n : null, min: lo, max: hi,
+      var mean = n ? weighted / n : null;
+      // Pooled standard deviation over the window: the spread within each day
+      // plus the spread of the daily means about the overall mean. Averaging
+      // the daily SDs would throw the second part away and understate the
+      // variation across the period, which is the part that matters here.
+      var sd = null;
+      if (mean !== null && n > 1) {
+        var ss = 0;
+        days.forEach(function (d) {
+          var within = (d.sd === null || d.sd === undefined) ? 0 : d.sd * d.sd;
+          ss += (d.n - 1) * within + d.n * (d.mean - mean) * (d.mean - mean);
+        });
+        sd = Math.sqrt(ss / (n - 1));
+      }
+      return { mean: mean, sd: sd, min: lo, max: hi,
                n: n, days: days.length, unit: "readings" };
     }
     var points = rawSeries(deviceId, state.param);
     var stats = summarise(points);
     if (!stats) return null;
-    return { mean: stats.mean, min: stats.min, max: stats.max,
+    return { mean: stats.mean, sd: stats.sd, min: stats.min, max: stats.max,
              n: stats.n, days: null, unit: "readings" };
+  }
+
+  // A horizontal +/-1 SD band about the window mean, clipped to the plot so
+  // it never spills past the axis. Returns null when there is no spread to
+  // draw: a single reading, or a band narrower than a hairline.
+  function sdBand(y, stats, x1, x2, lo, hi) {
+    if (!stats || stats.sd === null || stats.sd === undefined || !stats.sd) return null;
+    var top = Math.min(stats.mean + stats.sd, hi);
+    var bottom = Math.max(stats.mean - stats.sd, lo);
+    if (top <= bottom) return null;
+    var yTop = y(top), yBottom = y(bottom);
+    var height = Math.abs(yBottom - yTop);
+    if (height < 0.4) return null;
+    return svg("rect", {
+      x: x1, y: Math.min(yTop, yBottom), width: x2 - x1, height: height,
+      fill: "var(--sd-wash)"
+    });
   }
 
   function writeStatLine(node, stats, def, tail) {
@@ -952,6 +992,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     statLine(node, "mean", fmt(stats.mean, def.precision) + unit);
     statLine(node, "range",
       fmt(stats.min, def.precision) + "\u2013" + fmt(stats.max, def.precision) + unit);
+    if (stats.sd !== null && stats.sd !== undefined) {
+      statLine(node, "sd", "\u00b1" + fmt(stats.sd, def.precision) + unit);
+    }
     if (tail) statLine(node, tail.k, tail.v);
   }
 
@@ -987,9 +1030,13 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       d: geo.d, fill: "none", stroke: "var(--series)", "stroke-width": "1.6",
       "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke"
     }));
-    // mean line, so the shape of the trace has something to sit against
+    // mean line, so the shape of the trace has something to sit against,
+    // sitting in a +/-1 SD band so the spread is visible and not only stated
     var stats = summarise(pts);
     if (stats) {
+      var band = sdBand(geo.y, stats, 0, W, geo.lo, geo.hi);
+      // Behind everything already drawn, so the trace stays legible over it.
+      if (band) node.insertBefore(band, node.firstChild);
       node.appendChild(svg("line", {
         x1: 0, x2: W, y1: geo.y(stats.mean), y2: geo.y(stats.mean),
         stroke: "var(--muted)", "stroke-width": "0.75", "stroke-dasharray": "3 3",
@@ -1193,9 +1240,14 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
             statLine(statsEl, "no data", "in this window");
             return;
           }
+          // Units are left off here, unlike the big chart: the panel is 200px
+          // wide and the unit is already on the reading above.
           statLine(statsEl, "mean", fmt(stats.mean, def.precision));
           statLine(statsEl, "range",
             fmt(stats.min, def.precision) + "–" + fmt(stats.max, def.precision));
+          if (stats.sd !== null && stats.sd !== undefined) {
+            statLine(statsEl, "sd", "±" + fmt(stats.sd, def.precision));
+          }
         }
         writeStats();
 
@@ -1298,6 +1350,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     }
     if (stats && stats.mean !== null) {
       legendItem("var(--muted)", "mean over " + windowPhrase(), null, true);
+      if (state.mode !== "daily" && stats.sd) {
+        legendItem("var(--sd-wash)", "\u00b11 SD about that mean");
+      }
     }
     if (spotChecks(device.sump, state.param).length) {
       legendItem("var(--surface)", "in-situ spot sample");
@@ -1440,6 +1495,13 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     var windowMean = summariseDrawn(device.device_id);
     if (windowMean && windowMean.mean !== null &&
         windowMean.mean >= lo && windowMean.mean <= hi) {
+      // In daily mode the chart already carries a per-day +/-1 SD ribbon, and
+      // two different standard deviations on one chart is one too many, so the
+      // window band is drawn only against the raw trace.
+      if (!daily) {
+        var sdRect = sdBand(y, windowMean, m.left, W - m.right, lo, hi);
+        if (sdRect) node.appendChild(sdRect);
+      }
       node.appendChild(svg("line", {
         x1: m.left, x2: W - m.right,
         y1: y(windowMean.mean), y2: y(windowMean.mean),
@@ -2008,6 +2070,8 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       // panels and the big chart carry.
       var cardStats = summarise(points);
       if (cardStats && cardStats.mean >= lo && cardStats.mean <= hi) {
+        var cardBand = sdBand(y, cardStats, 0, W, lo, hi);
+        if (cardBand) node.appendChild(cardBand);
         node.appendChild(svg("line", {
           x1: 0, x2: W, y1: y(cardStats.mean), y2: y(cardStats.mean),
           stroke: "var(--muted)", "stroke-width": "0.75", "stroke-dasharray": "3 3",
