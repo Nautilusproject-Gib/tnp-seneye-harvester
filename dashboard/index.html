@@ -226,6 +226,37 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .alert.offline .dot{background:var(--offline)}
 .alert.good .dot{background:var(--good)}
 
+/* slide replacement countdown */
+.slides-strip{
+  display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;font-size:13px;
+  padding:10px 14px;border-radius:10px;border:1px solid var(--rule);
+  background:var(--surface);margin:0 0 18px;
+}
+.slides-strip.warning{border-color:color-mix(in srgb,var(--warning) 55%,var(--rule))}
+.slides-strip.critical{border-color:color-mix(in srgb,var(--critical) 55%,var(--rule))}
+.slides-strip .slide-icon{width:11px;height:11px;border-radius:3px;flex:none;background:var(--good)}
+.slides-strip.warning .slide-icon{background:var(--warning)}
+.slides-strip.critical .slide-icon{background:var(--critical)}
+.slides-strip .headline{font-weight:600}
+.slides-strip.warning .headline{color:var(--near-ink)}
+.slides-strip.critical .headline{color:var(--critical)}
+.slides-strip .where{color:var(--muted)}
+.slides-strip .source{
+  font-size:11px;color:var(--muted);border:1px solid var(--rule);
+  border-radius:999px;padding:2px 8px;margin-left:auto;
+}
+/* Stacked rather than side by side: at panel width the status chip and the
+   slide chip only sometimes fit on one line, and a panel that wraps while its
+   neighbour does not shunts its sparkline out of alignment. */
+.chips{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.chip.slide{font-family:"IBM Plex Mono",monospace;letter-spacing:.02em}
+.chip.slide .dot{border-radius:2px;width:7px;height:7px}
+.chip.slide.ok .dot{background:var(--good)}
+.chip.slide.warning{border-color:color-mix(in srgb,var(--warning) 45%,var(--rule))}
+.chip.slide.warning .dot{background:var(--warning)}
+.chip.slide.critical{border-color:color-mix(in srgb,var(--critical) 45%,var(--rule));color:var(--critical)}
+.chip.slide.critical .dot{background:var(--critical)}
+
 /* system sections: two across where the page is wide enough, one where it
    is not, so the systems use the width instead of stacking down the page */
 .systems-grid{
@@ -435,6 +466,8 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
   <div class="alerts" id="alerts"></div>
 
+  <div class="slides-strip" id="slides-strip" hidden></div>
+
   <section class="detail" id="detail" hidden>
     <div class="detail-head">
       <h2 id="detail-title">—</h2>
@@ -585,6 +618,95 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
   }
 
   function now() { return state.data.generated_at; }
+
+  // The slide countdown is the one number on this page that must be right
+  // today rather than right at the last harvest, so it is worked out from the
+  // reader's own clock instead of generated_at.
+  function today() { return Math.floor(Date.now() / 1000); }
+
+  function slideFor(deviceId) {
+    var slides = state.data.slides || {};
+    var entry = (slides.by_device || {})[deviceId];
+    if (!entry || !entry.due) return null;
+    var days = Math.ceil((entry.due - today()) / 86400);
+    var warn = slides.warn_days || 7;
+    return {
+      due: entry.due,
+      days: days,
+      source: entry.source,
+      serial: entry.serial,
+      kind: days <= 0 ? "critical" : (days <= warn ? "warning" : "ok")
+    };
+  }
+
+  function slideWords(days) {
+    if (days < 0) return "overdue by " + Math.abs(days) + (Math.abs(days) === 1 ? " day" : " days");
+    if (days === 0) return "due today";
+    if (days === 1) return "in 1 day";
+    return "in " + days + " days";
+  }
+
+  function renderSlides() {
+    var strip = el("slides-strip");
+    strip.textContent = "";
+    var devices = state.data.devices || [];
+    var entries = [];
+    devices.forEach(function (d) {
+      var slide = slideFor(d.device_id);
+      if (slide) entries.push({ device: d, slide: slide });
+    });
+    if (!entries.length) { strip.hidden = true; return; }
+    strip.hidden = false;
+
+    entries.sort(function (a, b) { return a.slide.due - b.slide.due; });
+    var soonest = entries[0].slide;
+    strip.className = "slides-strip" + (soonest.kind === "ok" ? "" : " " + soonest.kind);
+
+    var icon = document.createElement("span");
+    icon.className = "slide-icon";
+    strip.appendChild(icon);
+
+    var headline = document.createElement("span");
+    headline.className = "headline";
+    headline.textContent = soonest.days > 0
+      ? "Replace slide " + slideWords(soonest.days)
+      : (soonest.days === 0 ? "Slide replacement due today"
+                            : "Slide replacement " + slideWords(soonest.days));
+    strip.appendChild(headline);
+
+    // Group by due date so nine identical dates read as "all nine sumps"
+    // rather than nine lines saying the same thing.
+    var groups = [], seen = {};
+    entries.forEach(function (e) {
+      var key = String(e.slide.due);
+      if (!seen[key]) { seen[key] = { due: e.slide.due, sumps: [] }; groups.push(seen[key]); }
+      seen[key].sumps.push(e.device.sump || e.device.device_id);
+    });
+
+    var where = document.createElement("span");
+    where.className = "where";
+    if (groups.length === 1) {
+      where.textContent = "all " + groups[0].sumps.length + " sumps, due " +
+        fmtDate(groups[0].due);
+    } else {
+      where.textContent = groups.slice(0, 3).map(function (g) {
+        return g.sumps.join(", ") + " " + fmtDate(g.due);
+      }).join("  ·  ") + (groups.length > 3 ? "  ·  +" + (groups.length - 3) + " more" : "");
+    }
+    strip.appendChild(where);
+
+    var source = document.createElement("span");
+    source.className = "source";
+    var fromSensor = entries.filter(function (e) { return e.slide.source === "sensor"; }).length;
+    source.textContent = fromSensor === entries.length
+      ? "expiry reported by the sensors"
+      : (fromSensor ? "part sensor, part logged change dates" : "from the logged change dates");
+    source.title = "Slides last " + ((state.data.slides || {}).interval_days || 30) +
+      " days and are changed at the unit in the sump.";
+    strip.appendChild(source);
+  }
+
+
 
   function rawSeries(deviceId, param) {
     var ti = colIndex("t"), vi = colIndex(param), di = colIndex("device_id");
@@ -970,13 +1092,33 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
         ph.appendChild(left); ph.appendChild(right);
         panel.appendChild(ph);
 
+        var chips = document.createElement("div");
+        chips.className = "chips";
         var chip = document.createElement("span");
         chip.className = "chip " + st.kind;
         var dot = document.createElement("span");
         dot.className = "dot";
         chip.appendChild(dot);
         chip.appendChild(document.createTextNode(st.label));
-        panel.appendChild(chip);
+        chips.appendChild(chip);
+
+        var slide = slideFor(d.device_id);
+        if (slide) {
+          var sc = document.createElement("span");
+          sc.className = "chip slide " + slide.kind;
+          var sdot = document.createElement("span");
+          sdot.className = "dot";
+          sc.appendChild(sdot);
+          sc.appendChild(document.createTextNode(
+            slide.days < 0 ? "slide overdue"
+              : (slide.days === 0 ? "slide due today" : "slide " + slide.days + "d")));
+          sc.title = "Replace this sump's slide " + slideWords(slide.days) +
+            " (due " + fmtDate(slide.due) + ", " +
+            (slide.source === "sensor" ? "expiry reported by the sensor"
+                                       : "from the logged change date") + ")";
+          chips.appendChild(sc);
+        }
+        panel.appendChild(chips);
 
         var spark = svg("svg", { class: "spark" });
         panel.appendChild(spark);
@@ -2167,14 +2309,17 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
   function renderAll() {
     renderHeader();
     renderViews();
+    scheduleHeightReport();
     if (state.view === "sensor") {
       renderControls();
       renderAlerts();
+      renderSlides();
       renderDetail();
       renderPanels();
       renderTable();
       buildExport(el("export-sensor"), "sensor");
     } else {
+      el("slides-strip").hidden = true;
       renderLab();
       renderInsituCharts();
       buildExport(el("export-insitu"), "insitu");
@@ -2198,6 +2343,42 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     e.className = "empty";
     e.textContent = message;
     host.appendChild(e);
+  }
+
+  // ---- embedding --------------------------------------------------------
+
+  // When this page sits in an iframe on the TNP site it tells the parent how
+  // tall it is, so the frame can grow instead of scrolling inside itself.
+  // Same-origin is not required: postMessage crosses origins, and the host
+  // page ignores anything it does not recognise.
+  function reportHeight() {
+    if (window.parent === window) return;
+    // Measure the content, not the viewport. documentElement.scrollHeight is
+    // at least as tall as the frame it was given, so using it would let the
+    // frame grow but never shrink back. The body's own box is content-sized.
+    var box = document.body.getBoundingClientRect();
+    var height = Math.ceil(box.height + box.top);
+    try {
+      // Same shape as the ocean observatory dashboard uses, so the site keeps
+      // one convention: a flat property named after the dashboard.
+      window.parent.postMessage({ tnpNurseryHeight: height }, "*");
+    } catch (err) { /* the host may forbid it; the fallback height covers us */ }
+  }
+
+  var heightTimer = null;
+  function scheduleHeightReport() {
+    clearTimeout(heightTimer);
+    heightTimer = setTimeout(reportHeight, 60);
+  }
+
+  if (window.parent !== window) {
+    window.addEventListener("load", scheduleHeightReport);
+    window.addEventListener("resize", scheduleHeightReport);
+    if (window.ResizeObserver) {
+      new ResizeObserver(scheduleHeightReport).observe(document.documentElement);
+    } else {
+      setInterval(reportHeight, 1000);
+    }
   }
 
   if (window.NURSERY_DATA) {
