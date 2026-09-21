@@ -30,9 +30,16 @@
   },
 
   "devices": {
-    "_comment": "Map each Seneye device id (the 'id' field from GET /v1/devices) to the sump it monitors. Run `python -m harvester.harvest --dry-run` once to print the ids on your account, then replace the example keys below. Everything else - system letter, tank list, label - is looked up from the sump.",
-    "EXAMPLE-ID-1": { "sump": "SA12" },
-    "EXAMPLE-ID-2": { "sump": "SD345" }
+    "_comment": "Seneye device id -> the sump it monitors, read from GET /v1/devices on 21 Sept 2026. The system letter, tank list and label are looked up from the sump. If a unit is moved, change its sump here; readings already stored keep the mapping they were collected under.",
+    "168779": { "sump": "SA12" },
+    "166115": { "sump": "SA345" },
+    "165185": { "sump": "SB12" },
+    "162893": { "sump": "SB34" },
+    "164972": { "sump": "SC12" },
+    "165137": { "sump": "SC34" },
+    "165053": { "sump": "SD12" },
+    "165329": { "sump": "SD345" },
+    "165170": { "sump": "SE12" }
   },
 
   "parameters": {
