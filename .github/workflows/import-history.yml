@@ -1,0 +1,123 @@
+name: Import Seneye history
+
+# Loads a historical Seneye export into the database without anything being
+# installed locally: upload the CSVs to data/history/ in the browser, then run
+# this from the Actions tab.
+#
+#   1. Actions -> Import Seneye history -> Run workflow
+#   2. Leave "dry run" ticked the first time. The run writes nothing and its
+#      log shows which columns were matched, how many rows could be read and
+#      the period they span.
+#   3. Read that log. If the columns and dates look right, run it again with
+#      "dry run" unticked.
+#
+# Only ever run on demand. There is no schedule here on purpose: an import is
+# something a person decides to do, having looked at a dry run first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      timezone:
+        description: "Timezone the export's timestamps are in (ask Seneye)"
+        required: true
+        default: "UTC"
+        type: choice
+        options:
+          - UTC
+          - Europe/Gibraltar
+      folder:
+        description: "Folder in the repo holding the CSVs"
+        required: true
+        default: "data/history"
+      dry_run:
+        description: "Dry run — report only, write nothing"
+        required: true
+        default: true
+        type: boolean
+      sump:
+        description: "Sump code, only for a file that does not name its device (e.g. SA12)"
+        required: false
+        default: ""
+      month_first:
+        description: "Read ambiguous dates as MM/DD rather than DD/MM"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  # Shares a group with the scheduled harvest so an import and a harvest never
+  # write to the same SQLite file at the same time.
+  group: harvest
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install optional database driver
+        if: vars.DB_DRIVER != ''
+        run: pip install ${{ vars.DB_DRIVER }}
+
+      - name: Check the folder has something in it
+        run: |
+          shopt -s nullglob
+          files=("${{ inputs.folder }}"/*.csv "${{ inputs.folder }}"/*.CSV)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No CSV files in ${{ inputs.folder }}."
+            echo "Upload the export there first: Add file -> Upload files, on the repo's Code tab."
+            exit 1
+          fi
+          echo "Found ${#files[@]} file(s):"
+          printf '  %s\n' "${files[@]}"
+
+      - name: Import
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python tools/import_history.py \
+            --timezone "${{ inputs.timezone }}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.month_first && '--month-first' || '' }} \
+            ${{ inputs.sump != '' && format('--sump {0}', inputs.sump) || '' }} \
+            "${{ inputs.folder }}"
+
+      - name: Rebuild the dashboard export
+        if: ${{ !inputs.dry_run }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m harvester.harvest --export-only
+
+      - name: Commit data
+        if: ${{ !inputs.dry_run }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -n "$DATABASE_URL" ]; then
+            echo "external database in use, nothing to commit"
+            exit 0
+          fi
+          git config user.name "tnp-harvester"
+          git config user.email "actions@users.noreply.github.com"
+          for f in data/nursery.db dashboard/data/nursery.json dashboard/data/readings.csv; do
+            [ -f "$f" ] && git add -f "$f"
+          done
+          git diff --quiet --cached || git commit -m "import: historical readings from ${{ inputs.folder }}"
+          git pull --rebase --autostash origin ${GITHUB_REF_NAME} || true
+          git push
+
+      - name: What to do next
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "Imported. The dashboard picks the new readings up on its next Pages deploy,"
+          echo "which the scheduled harvest triggers within the half hour."
+          echo "If the history goes back more than a year, raise export.window_days in"
+          echo "config.json, or the dashboard will only summarise the most recent 365 days."
