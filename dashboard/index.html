@@ -218,6 +218,10 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .detail-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;margin-bottom:4px}
 .detail-head h2{margin:0;font-size:16px;font-weight:600}
 .detail-head .meta{font-size:12.5px;color:var(--ink-2)}
+.model-note{
+  margin:6px 0 0;font-size:12.5px;color:var(--ink-2);max-width:78ch;
+  border-left:2px solid var(--accent);padding-left:10px;
+}
 .legend{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 2px;font-size:12px;color:var(--ink-2)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .swatch{width:14px;height:10px;border-radius:2px;flex:none;border:1px solid var(--ring)}
@@ -335,21 +339,21 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
 <div class="wrap">
   <div class="controls">
-    <label class="control">
+    <div class="control" role="group">
       <span>Parameter</span>
       <div class="segmented" id="param-tabs" role="group" aria-label="Parameter"></div>
-    </label>
-    <label class="control">
+    </div>
+    <div class="control" role="group">
       <span>Window</span>
       <div class="segmented" id="range-tabs" role="group" aria-label="Time window"></div>
-    </label>
-    <label class="control">
+    </div>
+    <div class="control" role="group">
       <span>Series</span>
       <div class="segmented" id="mode-tabs" role="group" aria-label="Series type">
         <button type="button" data-mode="raw">Raw readings</button>
         <button type="button" data-mode="daily">Daily mean ±1 SD</button>
       </div>
-    </label>
+    </div>
   </div>
 
   <div class="alerts" id="alerts"></div>
@@ -359,6 +363,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       <h2 id="detail-title">—</h2>
       <span class="meta" id="detail-meta"></span>
     </div>
+    <p class="model-note" id="model-note" hidden></p>
     <div class="legend" id="detail-legend"></div>
     <div class="chart-box">
       <svg class="chart" id="chart" role="img" aria-label="Time series"></svg>
@@ -556,7 +561,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
   function renderControls() {
     buildSegmented(
       el("param-tabs"),
-      (state.data.parameters || []).map(function (p) { return { key: p.key, label: p.label }; }),
+      (state.data.parameters || []).map(function (p) {
+        return { key: p.key, label: p.label };
+      }),
       state.param,
       function (key) { state.param = key; renderAll(); }
     );
@@ -955,6 +962,15 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       ((device.tanks && device.tanks.length) ? "serves tanks " + device.tanks.join(", ") + " · " : "") +
       (latest ? "last reading " + fmtTime(latest.t, true) : "no readings") +
       (latest && latest.slide_serial ? " · slide " + latest.slide_serial : "");
+
+    var modelNote = el("model-note");
+    if (def.modelled) {
+      modelNote.hidden = false;
+      modelNote.textContent = def.model_note ||
+        "Calculated from the measured values, not measured directly.";
+    } else {
+      modelNote.hidden = true;
+    }
 
     var legend = el("detail-legend");
     legend.textContent = "";
