@@ -965,21 +965,100 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
              n: stats.n, days: null, unit: "readings" };
   }
 
-  // A horizontal +/-1 SD band about the window mean, clipped to the plot so
-  // it never spills past the axis. Returns null when there is no spread to
-  // draw: a single reading, or a band narrower than a hairline.
-  function sdBand(y, stats, x1, x2, lo, hi) {
-    if (!stats || stats.sd === null || stats.sd === undefined || !stats.sd) return null;
-    var top = Math.min(stats.mean + stats.sd, hi);
-    var bottom = Math.max(stats.mean - stats.sd, lo);
-    if (top <= bottom) return null;
-    var yTop = y(top), yBottom = y(bottom);
-    var height = Math.abs(yBottom - yTop);
-    if (height < 0.4) return null;
-    return svg("rect", {
-      x: x1, y: Math.min(yTop, yBottom), width: x2 - x1, height: height,
-      fill: "var(--sd-wash)"
-    });
+  // A rolling +/-1 SD envelope that follows the trace, rather than one flat
+  // band across the whole chart. At each reading the mean and standard
+  // deviation are taken over its neighbours within ROLL_FRACTION of the
+  // visible period, so the band widens where the water is swinging about and
+  // narrows where it is steady. That is the thing worth seeing; a flat band
+  // only restates the number already printed above the chart.
+  var ROLL_FRACTION = 0.1;   // window width as a share of the visible period
+  var ROLL_MIN_POINTS = 3;   // fewer than this in a window is not a spread
+  var ROLL_MIN_SERIES = 12;  // and too few points overall is just noise
+
+  function rollingSd(points) {
+    if (!points || points.length < ROLL_MIN_SERIES) return null;
+    var t0 = points[0].t, t1 = points[points.length - 1].t;
+    var span = (t1 - t0) * ROLL_FRACTION;
+    if (!(span > 0)) return null;
+    var half = span / 2;
+
+    // Values are shifted by the series mean before squaring. Squaring raw pH
+    // values around 8 and subtracting loses most of the precision in a
+    // variance of a few thousandths.
+    var total = 0;
+    points.forEach(function (p) { total += p.v; });
+    var shift = total / points.length;
+
+    var upper = [], lower = [], lo = 0, hi = 0, sum = 0, sumsq = 0, covered = 0;
+    for (var i = 0; i < points.length; i++) {
+      while (hi < points.length && points[hi].t <= points[i].t + half) {
+        var add = points[hi].v - shift;
+        sum += add; sumsq += add * add; hi++;
+      }
+      while (points[lo].t < points[i].t - half) {
+        var drop = points[lo].v - shift;
+        sum -= drop; sumsq -= drop * drop; lo++;
+      }
+      var n = hi - lo;
+      if (n < ROLL_MIN_POINTS) { upper.push(null); lower.push(null); continue; }
+      var mean = sum / n;
+      var variance = (sumsq - n * mean * mean) / (n - 1);
+      if (!(variance > 0)) { upper.push(null); lower.push(null); continue; }
+      var sd = Math.sqrt(variance);
+      var centre = mean + shift;
+      upper.push({ t: points[i].t, v: centre + sd });
+      lower.push({ t: points[i].t, v: centre - sd });
+      covered++;
+    }
+    // A band with holes through most of it reads as a mistake, so it is all
+    // or nothing.
+    if (covered < points.length * 0.6) return null;
+    return { upper: upper, lower: lower, span: span };
+  }
+
+  // One closed path from the top edge out and the bottom edge back, split
+  // wherever the envelope has a gap so a hole never joins up into a lie.
+  function envelopePath(band, x, y, lo, hi) {
+    var clamp = function (v) { return Math.max(lo, Math.min(hi, v)); };
+    var d = "", run = [];
+    function flush() {
+      if (run.length < 2) { run = []; return; }
+      var i;
+      for (i = 0; i < run.length; i++) {
+        d += (i ? "L" : "M") + x(band.upper[run[i]].t).toFixed(1) + " " +
+             y(clamp(band.upper[run[i]].v)).toFixed(1);
+      }
+      for (i = run.length - 1; i >= 0; i--) {
+        d += "L" + x(band.lower[run[i]].t).toFixed(1) + " " +
+             y(clamp(band.lower[run[i]].v)).toFixed(1);
+      }
+      d += "Z";
+      run = [];
+    }
+    for (var i = 0; i < band.upper.length; i++) {
+      if (band.upper[i] === null) flush(); else run.push(i);
+    }
+    flush();
+    return d || null;
+  }
+
+  function sdEnvelope(points, x, y, lo, hi) {
+    var band = rollingSd(points);
+    if (!band) return null;
+    var d = envelopePath(band, x, y, lo, hi);
+    if (!d) return null;
+    var node = svg("path", { d: d, fill: "var(--sd-wash)", stroke: "none" });
+    return { node: node, span: band.span };
+  }
+
+  // "17 h", "2.4 h", "3 days" - whatever reads most plainly at that size.
+  function spanWords(seconds) {
+    var hours = seconds / 3600;
+    if (hours < 1) return Math.round(seconds / 60) + " min";
+    if (hours < 10) return (Math.round(hours * 10) / 10) + " h";
+    if (hours < 48) return Math.round(hours) + " h";
+    var days = Math.round(hours / 24);
+    return days + " day" + (days === 1 ? "" : "s");
   }
 
   function writeStatLine(node, stats, def, tail) {
@@ -1034,9 +1113,9 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     // sitting in a +/-1 SD band so the spread is visible and not only stated
     var stats = summarise(pts);
     if (stats) {
-      var band = sdBand(geo.y, stats, 0, W, geo.lo, geo.hi);
+      var band = sdEnvelope(pts, geo.x, geo.y, geo.lo, geo.hi);
       // Behind everything already drawn, so the trace stays legible over it.
-      if (band) node.insertBefore(band, node.firstChild);
+      if (band) node.insertBefore(band.node, node.firstChild);
       node.appendChild(svg("line", {
         x1: 0, x2: W, y1: geo.y(stats.mean), y2: geo.y(stats.mean),
         stroke: "var(--muted)", "stroke-width": "0.75", "stroke-dasharray": "3 3",
@@ -1350,9 +1429,6 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     }
     if (stats && stats.mean !== null) {
       legendItem("var(--muted)", "mean over " + windowPhrase(), null, true);
-      if (state.mode !== "daily" && stats.sd) {
-        legendItem("var(--sd-wash)", "\u00b11 SD about that mean");
-      }
     }
     if (spotChecks(device.sump, state.param).length) {
       legendItem("var(--surface)", "in-situ spot sample");
@@ -1362,6 +1438,10 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     // The chart decides the axis, so it is the chart that knows whether the
     // working range fits inside it. Its legend entry is added afterwards.
     var drawn = drawChart(device, def);
+    if (drawn && drawn.rollSpan) {
+      legendItem("var(--sd-wash)",
+        "\u00b11 SD, rolling " + spanWords(drawn.rollSpan));
+    }
     if (def.band) {
       legendItem("var(--band)", "working range " + def.band[0] + "–" + def.band[1] +
         (def.unit ? " " + def.unit : "") +
@@ -1378,6 +1458,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     node.setAttribute("preserveAspectRatio", "none");
 
     var daily = state.mode === "daily";
+    var rollSpan = null;
     var series = daily ? dailySeries(device.device_id, state.param) : rawSeries(device.device_id, state.param);
 
     if (series.length < 2) {
@@ -1496,11 +1577,14 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     if (windowMean && windowMean.mean !== null &&
         windowMean.mean >= lo && windowMean.mean <= hi) {
       // In daily mode the chart already carries a per-day +/-1 SD ribbon, and
-      // two different standard deviations on one chart is one too many, so the
-      // window band is drawn only against the raw trace.
+      // two standard deviations on one chart is one too many, so the rolling
+      // envelope is drawn only against the raw trace.
       if (!daily) {
-        var sdRect = sdBand(y, windowMean, m.left, W - m.right, lo, hi);
-        if (sdRect) node.appendChild(sdRect);
+        var envelope = sdEnvelope(series, x, y, lo, hi);
+        if (envelope) {
+          node.appendChild(envelope.node);
+          rollSpan = envelope.span;
+        }
       }
       node.appendChild(svg("line", {
         x1: m.left, x2: W - m.right,
@@ -1582,7 +1666,8 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
     attachHover(node, series, { x: x, y: y, m: m, W: W, H: H, daily: daily, def: def });
 
-    return { bandVisible: bandVisible, bandBeyond: bandBeyond, lo: lo, hi: hi };
+    return { bandVisible: bandVisible, bandBeyond: bandBeyond, lo: lo, hi: hi,
+             rollSpan: rollSpan };
   }
 
   function attachHover(node, series, geo) {
@@ -2070,8 +2155,12 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       // panels and the big chart carry.
       var cardStats = summarise(points);
       if (cardStats && cardStats.mean >= lo && cardStats.mean <= hi) {
-        var cardBand = sdBand(y, cardStats, 0, W, lo, hi);
-        if (cardBand) node.appendChild(cardBand);
+        // Sparse sampling: with a couple of dozen samples spread over months
+        // a rolling window has too little in it to mean anything, so those
+        // cards carry the figure without the band until the record is long
+        // enough for one.
+        var cardBand = sdEnvelope(points, x, y, lo, hi);
+        if (cardBand) node.appendChild(cardBand.node);
         node.appendChild(svg("line", {
           x1: 0, x2: W, y1: y(cardStats.mean), y2: y(cardStats.mean),
           stroke: "var(--muted)", "stroke-width": "0.75", "stroke-dasharray": "3 3",
