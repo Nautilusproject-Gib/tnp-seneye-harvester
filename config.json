@@ -1,0 +1,102 @@
+{
+  "_comment": "Edit this file, not the code. Credentials never live here - they come from the SENEYE_USER / SENEYE_PWD environment variables.",
+
+  "site": {
+    "title": "Seagrass Nursery Monitoring",
+    "subtitle": "Posidonia oceanica conditioning systems, North Mole, Gibraltar",
+    "organisation": "The Nautilus Project",
+    "timezone": "Europe/Gibraltar"
+  },
+
+  "systems": {
+    "_comment": "The five nursery systems. Each Seneye sits in a sump, and a sump serves the tanks listed against it.",
+    "A": { "label": "System A", "lit": true },
+    "B": { "label": "System B", "lit": true },
+    "C": { "label": "System C", "lit": "mixed" },
+    "D": { "label": "System D", "lit": "mixed" },
+    "E": { "label": "System E", "lit": true }
+  },
+
+  "sumps": {
+    "SA12":  { "system": "A", "tanks": ["A1", "A2"] },
+    "SA345": { "system": "A", "tanks": ["A3", "A4", "A5"] },
+    "SB12":  { "system": "B", "tanks": ["B1", "B2"] },
+    "SB34":  { "system": "B", "tanks": ["B3", "B4"] },
+    "SC12":  { "system": "C", "tanks": ["C1", "C2"] },
+    "SC34":  { "system": "C", "tanks": ["C3", "C4"], "group": "unlit holding" },
+    "SD12":  { "system": "D", "tanks": ["D1", "D2"], "group": "unlit holding" },
+    "SD345": { "system": "D", "tanks": ["D3", "D4", "D5"], "group": "unlit holding" },
+    "SE12":  { "system": "E", "tanks": ["E1", "E2"] }
+  },
+
+  "devices": {
+    "_comment": "Map each Seneye device id (the 'id' field from GET /v1/devices) to the sump it monitors. Run `python -m harvester.harvest --dry-run` once to print the ids on your account, then replace the example keys below. Everything else - system letter, tank list, label - is looked up from the sump.",
+    "EXAMPLE-ID-1": { "sump": "SA12" },
+    "EXAMPLE-ID-2": { "sump": "SD345" }
+  },
+
+  "parameters": {
+    "_comment": "band = the nursery's own working range (shown green). hard = the range outside which a reading is flagged critical. These are operator set points for the TNP nursery, not published tolerances - change them to match your protocol.",
+    "temperature": {
+      "label": "Temperature",
+      "unit": "°C",
+      "precision": 2,
+      "band": [18.0, 24.0],
+      "hard": [15.0, 27.0]
+    },
+    "ph": {
+      "label": "pH",
+      "unit": "",
+      "precision": 2,
+      "band": [7.9, 8.3],
+      "hard": [7.6, 8.6]
+    },
+    "nh3": {
+      "label": "Free ammonia (NH₃)",
+      "unit": "mg/L",
+      "precision": 3,
+      "band": [0.0, 0.02],
+      "hard": [0.0, 0.05]
+    },
+    "nh4": {
+      "label": "Ammonium (NH₄⁺)",
+      "unit": "mg/L",
+      "precision": 3,
+      "band": null,
+      "hard": null
+    },
+    "o2": {
+      "label": "Dissolved oxygen",
+      "unit": "mg/L",
+      "precision": 2,
+      "band": [6.0, 10.0],
+      "hard": [4.0, 14.0]
+    },
+    "par": {
+      "label": "PAR",
+      "unit": "µmol m⁻² s⁻¹",
+      "precision": 0,
+      "band": null,
+      "hard": null
+    },
+    "lux": {
+      "label": "Illuminance",
+      "unit": "lux",
+      "precision": 0,
+      "band": null,
+      "hard": null
+    },
+    "kelvin": {
+      "label": "Colour temperature",
+      "unit": "K",
+      "precision": 0,
+      "band": null,
+      "hard": null
+    }
+  },
+
+  "export": {
+    "window_days": 365,
+    "raw_days": 30
+  }
+}

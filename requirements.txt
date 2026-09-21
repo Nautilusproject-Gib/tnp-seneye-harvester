@@ -1,0 +1,5 @@
+# The harvester needs no third-party packages on the default SQLite backend.
+# Install a driver only if DATABASE_URL points elsewhere:
+#
+#   psycopg[binary]>=3.1          # PostgreSQL
+#   mysql-connector-python>=8.0   # MySQL / MariaDB

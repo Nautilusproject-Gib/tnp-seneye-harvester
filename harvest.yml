@@ -1,0 +1,78 @@
+name: Harvest nursery readings
+
+on:
+  schedule:
+    # every 30 minutes; GitHub's scheduler is best-effort, so a run can be late
+    # or skipped when the service is busy. The harvester is idempotent, so a
+    # missed run only costs the readings the Seneye API had at that moment.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: harvest
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # No third-party packages are needed for the default SQLite backend.
+      # If DATABASE_URL points at Postgres or MySQL, install its driver here:
+      #   pip install psycopg[binary]      # Postgres
+      #   pip install mysql-connector-python  # MySQL
+      - name: Install optional database driver
+        if: vars.DB_DRIVER != ''
+        run: pip install ${{ vars.DB_DRIVER }}
+
+      - name: Harvest
+        env:
+          SENEYE_USER: ${{ secrets.SENEYE_USER }}
+          SENEYE_PWD: ${{ secrets.SENEYE_PWD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m harvester.harvest
+
+      # With no DATABASE_URL the SQLite file and the exports live in the repo,
+      # which keeps the whole thing free and self-contained.
+      - name: Commit data
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -n "$DATABASE_URL" ]; then
+            echo "external database in use, nothing to commit"
+            exit 0
+          fi
+          git config user.name "tnp-harvester"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f data/nursery.db dashboard/data/nursery.json dashboard/data/readings.csv
+          git diff --quiet --cached || git commit -m "harvest: readings at $(date -u +%Y-%m-%dT%H:%MZ)"
+          git pull --rebase --autostash origin ${GITHUB_REF_NAME} || true
+          git push
+
+  publish:
+    needs: harvest
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard
+      - id: deploy
+        uses: actions/deploy-pages@v4

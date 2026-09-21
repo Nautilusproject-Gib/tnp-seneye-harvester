@@ -1,0 +1,1047 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seagrass Nursery Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  color-scheme: light;
+  --page:#eef3f4;
+  --surface:#ffffff;
+  --surface-2:#f6f9f9;
+  --ink:#0b1f24;
+  --ink-2:#4a5f66;
+  --muted:#7b8e94;
+  --grid:#dfe8e9;
+  --rule:#c9d7d9;
+  --accent:#0f7d8c;
+  --accent-soft:rgba(15,125,140,.10);
+  --series:#2a78d6;
+  --series-soft:rgba(42,120,214,.16);
+  --series-faint:rgba(42,120,214,.07);
+  --band:rgba(15,125,140,.09);
+  --good:#0ca30c;
+  --warning:#fab219;
+  --critical:#d03b3b;
+  --offline:#7b8e94;
+  --shadow:0 1px 2px rgba(11,31,36,.06), 0 6px 18px rgba(11,31,36,.05);
+  --ring:rgba(11,31,36,.10);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --page:#081113;
+    --surface:#111f22;
+    --surface-2:#0d191c;
+    --ink:#eaf3f4;
+    --ink-2:#adc1c5;
+    --muted:#7f9498;
+    --grid:#1f3237;
+    --rule:#2a3f44;
+    --accent:#2fa7b6;
+    --accent-soft:rgba(47,167,182,.14);
+    --series:#3987e5;
+    --series-soft:rgba(57,135,229,.22);
+    --series-faint:rgba(57,135,229,.10);
+    --band:rgba(47,167,182,.12);
+    --good:#0ca30c;
+    --warning:#fab219;
+    --critical:#e06a6a;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    --ring:rgba(255,255,255,.10);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --page:#081113;
+  --surface:#111f22;
+  --surface-2:#0d191c;
+  --ink:#eaf3f4;
+  --ink-2:#adc1c5;
+  --muted:#7f9498;
+  --grid:#1f3237;
+  --rule:#2a3f44;
+  --accent:#2fa7b6;
+  --accent-soft:rgba(47,167,182,.14);
+  --series:#3987e5;
+  --series-soft:rgba(57,135,229,.22);
+  --series-faint:rgba(57,135,229,.10);
+  --band:rgba(47,167,182,.12);
+  --good:#0ca30c;
+  --warning:#fab219;
+  --critical:#e06a6a;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --ring:rgba(255,255,255,.10);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--page);
+  color:var(--ink);
+  font-family:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size:15px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:0 48px}
+.mono{font-family:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;font-variant-numeric:tabular-nums}
+
+/* header */
+header.top{
+  position:sticky;top:env(safe-area-inset-top,0px);z-index:20;
+  background:color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter:saturate(1.4) blur(10px);
+  border-bottom:1px solid var(--rule);
+}
+.top-inner{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;flex-wrap:wrap;gap:12px 20px;align-items:baseline}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 2px}
+h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em;text-wrap:balance}
+.sub{margin:2px 0 0;color:var(--ink-2);font-size:13px}
+.freshness{margin-left:auto;text-align:right;font-size:12px;color:var(--ink-2)}
+.freshness strong{display:block;font-size:13px;color:var(--ink);font-weight:600}
+
+/* controls */
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:flex-end;margin:22px 0 18px}
+.control{display:flex;flex-direction:column;gap:6px}
+.control > span{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.segmented{display:flex;flex-wrap:wrap;gap:4px;background:var(--surface-2);border:1px solid var(--rule);border-radius:9px;padding:3px}
+.segmented button{
+  font:inherit;font-size:13px;color:var(--ink-2);background:none;border:0;border-radius:6px;
+  padding:6px 11px;cursor:pointer;white-space:nowrap;
+}
+.segmented button:hover{color:var(--ink);background:var(--accent-soft)}
+.segmented button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:500}
+.segmented button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ghost-btn{
+  font:inherit;font-size:13px;color:var(--ink-2);background:var(--surface);border:1px solid var(--rule);
+  border-radius:8px;padding:7px 13px;cursor:pointer;
+}
+.ghost-btn:hover{color:var(--ink);border-color:var(--accent)}
+.ghost-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* alert strip */
+.alerts{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px}
+.alert{
+  display:flex;align-items:center;gap:8px;font-size:13px;
+  padding:8px 12px;border-radius:8px;border:1px solid var(--rule);background:var(--surface);
+}
+.alert .dot{width:9px;height:9px;border-radius:50%;flex:none}
+.alert.critical{border-color:color-mix(in srgb,var(--critical) 45%,var(--rule))}
+.alert.critical .dot{background:var(--critical)}
+.alert.warning .dot{background:var(--warning)}
+.alert.offline .dot{background:var(--offline)}
+.alert.good .dot{background:var(--good)}
+
+/* system sections */
+.system{margin:0 0 26px}
+.system-head{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--rule)}
+.system-head h2{margin:0;font-size:14px;font-weight:600;letter-spacing:.02em}
+.system-head .note{font-size:12px;color:var(--muted)}
+.panels{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:12px}
+
+.panel{
+  background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:12px 13px 8px;
+  box-shadow:var(--shadow);cursor:pointer;text-align:left;font:inherit;color:inherit;
+  display:flex;flex-direction:column;gap:8px;width:100%;
+}
+.panel:hover{border-color:var(--accent)}
+.panel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.panel[aria-current="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent), var(--shadow)}
+.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.sump{font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;letter-spacing:.03em}
+.tanks{font-size:11.5px;color:var(--muted);margin-top:1px}
+.reading{text-align:right;line-height:1.1}
+.reading .val{font-family:"IBM Plex Mono",monospace;font-size:22px;font-weight:600;letter-spacing:-.02em}
+.reading .unit{font-size:11px;color:var(--muted);margin-left:2px;font-weight:400}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;line-height:1;
+  padding:3px 7px;border-radius:999px;border:1px solid var(--rule);color:var(--ink-2);margin-top:4px;
+  align-self:flex-start;max-width:100%;
+}
+.chip .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.chip.in-band .dot{background:var(--good)}
+.chip.out-band .dot{background:var(--warning)}
+.chip.critical{border-color:color-mix(in srgb,var(--critical) 45%,var(--rule));color:var(--critical)}
+.chip.critical .dot{background:var(--critical)}
+.chip.offline .dot{background:var(--offline)}
+.spark{display:block;width:100%;height:56px}
+
+/* detail */
+.detail{
+  background:var(--surface);border:1px solid var(--rule);border-radius:14px;
+  box-shadow:var(--shadow);padding:16px 16px 10px;margin:0 0 26px;
+}
+.detail-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;margin-bottom:4px}
+.detail-head h2{margin:0;font-size:16px;font-weight:600}
+.detail-head .meta{font-size:12.5px;color:var(--ink-2)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 2px;font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.swatch{width:14px;height:10px;border-radius:2px;flex:none;border:1px solid var(--ring)}
+.chart-box{position:relative}
+.chart{display:block;width:100%;height:340px;touch-action:pan-y}
+.tooltip{
+  position:absolute;pointer-events:none;opacity:0;transition:opacity .08s;
+  background:var(--surface);border:1px solid var(--rule);border-radius:8px;
+  box-shadow:var(--shadow);padding:8px 10px;font-size:12px;min-width:130px;z-index:5;
+}
+.tooltip .t-time{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);margin-bottom:4px}
+.tooltip .t-row{display:flex;justify-content:space-between;gap:14px}
+.tooltip .t-row b{font-family:"IBM Plex Mono",monospace;font-weight:600}
+
+/* table */
+details.table-block{background:var(--surface);border:1px solid var(--rule);border-radius:12px;box-shadow:var(--shadow);padding:0}
+details.table-block > summary{
+  cursor:pointer;list-style:none;padding:13px 16px;font-size:14px;font-weight:600;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+details.table-block > summary::-webkit-details-marker{display:none}
+details.table-block > summary::after{content:"+";font-family:"IBM Plex Mono",monospace;color:var(--muted)}
+details.table-block[open] > summary::after{content:"\2212"}
+.table-scroll{overflow-x:auto;border-top:1px solid var(--rule)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:7px 12px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--grid)}
+th:first-child,td:first-child{text-align:left}
+thead th{
+  position:sticky;top:0;background:var(--surface-2);color:var(--muted);font-weight:500;
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+}
+tbody td{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+tbody td:first-child{font-family:"IBM Plex Sans",sans-serif}
+tbody tr:hover td{background:var(--surface-2)}
+.table-foot{padding:10px 16px;font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+
+footer.notes{margin-top:30px;padding-top:16px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--ink-2);max-width:68ch}
+footer.notes p{margin:0 0 8px}
+footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px;border:1px solid var(--grid)}
+.empty{padding:40px 16px;text-align:center;color:var(--muted)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+@media (max-width:560px){
+  .freshness{margin-left:0;text-align:left;width:100%}
+  .chart{height:280px}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div>
+      <p class="eyebrow" id="org">The Nautilus Project</p>
+      <h1 id="title">Seagrass Nursery Monitoring</h1>
+      <p class="sub" id="subtitle"></p>
+    </div>
+    <div class="freshness">
+      <strong id="fresh-value">—</strong>
+      <span id="fresh-label">last reading</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="controls">
+    <label class="control">
+      <span>Parameter</span>
+      <div class="segmented" id="param-tabs" role="group" aria-label="Parameter"></div>
+    </label>
+    <label class="control">
+      <span>Window</span>
+      <div class="segmented" id="range-tabs" role="group" aria-label="Time window"></div>
+    </label>
+    <label class="control">
+      <span>Series</span>
+      <div class="segmented" id="mode-tabs" role="group" aria-label="Series type">
+        <button type="button" data-mode="raw">Raw readings</button>
+        <button type="button" data-mode="daily">Daily mean ±1 SD</button>
+      </div>
+    </label>
+  </div>
+
+  <div class="alerts" id="alerts"></div>
+
+  <section class="detail" id="detail" hidden>
+    <div class="detail-head">
+      <h2 id="detail-title">—</h2>
+      <span class="meta" id="detail-meta"></span>
+    </div>
+    <div class="legend" id="detail-legend"></div>
+    <div class="chart-box">
+      <svg class="chart" id="chart" role="img" aria-label="Time series"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+  </section>
+
+  <div id="systems"></div>
+
+  <details class="table-block" id="table-block">
+    <summary><span>Daily statistics</span></summary>
+    <div class="table-scroll">
+      <table id="stats-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="table-foot">
+      <span id="table-note"></span>
+      <button class="ghost-btn" type="button" id="copy-csv">Copy table as CSV</button>
+    </div>
+  </details>
+
+  <footer class="notes">
+    <p id="prov-1">Readings come from Seneye monitors in the nursery sumps, polled from the Seneye cloud API and stored by the TNP harvester. Each sump serves the tanks listed on its panel, so a reading describes the water shared by those tanks rather than any single tank.</p>
+    <p id="prov-2"></p>
+    <p>Working ranges shown on the charts are the nursery's own operating set points from <code>config.json</code>, not published tolerances for <i>Posidonia oceanica</i>.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DAY = 86400;
+  var RANGES = [
+    { key: "24h", label: "24 h", seconds: DAY },
+    { key: "7d", label: "7 days", seconds: 7 * DAY },
+    { key: "30d", label: "30 days", seconds: 30 * DAY },
+    { key: "90d", label: "90 days", seconds: 90 * DAY },
+    { key: "all", label: "All", seconds: null }
+  ];
+
+  var state = {
+    data: null,
+    param: null,
+    range: "7d",
+    mode: "raw",
+    device: null,
+    tz: "Europe/Gibraltar"
+  };
+
+  var el = function (id) { return document.getElementById(id); };
+  var SVGNS = "http://www.w3.org/2000/svg";
+
+  function svg(name, attrs) {
+    var node = document.createElementNS(SVGNS, name);
+    for (var k in attrs) {
+      if (attrs[k] !== null && attrs[k] !== undefined) node.setAttribute(k, attrs[k]);
+    }
+    return node;
+  }
+
+  function fmt(value, precision) {
+    if (value === null || value === undefined || isNaN(value)) return "—";
+    return Number(value).toFixed(precision);
+  }
+
+  function fmtTime(unix, withDate) {
+    var opts = { hour: "2-digit", minute: "2-digit", timeZone: state.tz, hour12: false };
+    if (withDate) { opts.day = "2-digit"; opts.month = "short"; }
+    return new Intl.DateTimeFormat("en-GB", opts).format(new Date(unix * 1000));
+  }
+
+  function fmtDate(unix) {
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit", month: "short", year: "numeric", timeZone: state.tz
+    }).format(new Date(unix * 1000));
+  }
+
+  function ago(seconds) {
+    if (seconds < 90) return "just now";
+    if (seconds < 5400) return Math.round(seconds / 60) + " min ago";
+    if (seconds < 172800) return Math.round(seconds / 3600) + " h ago";
+    return Math.round(seconds / DAY) + " days ago";
+  }
+
+  // ---- data access ----------------------------------------------------
+
+  function paramDef(key) {
+    var list = state.data.parameters || [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+    return { key: key, label: key, unit: "", precision: 2, band: null, hard: null };
+  }
+
+  function colIndex(key) {
+    return state.data.columns.indexOf(key);
+  }
+
+  function rangeSeconds() {
+    for (var i = 0; i < RANGES.length; i++) if (RANGES[i].key === state.range) return RANGES[i].seconds;
+    return 7 * DAY;
+  }
+
+  function now() { return state.data.generated_at; }
+
+  function rawSeries(deviceId, param) {
+    var ti = colIndex("t"), vi = colIndex(param), di = colIndex("device_id");
+    if (vi < 0) return [];
+    var span = rangeSeconds();
+    var cutoff = span === null ? -Infinity : now() - span;
+    var rows = state.data.readings, out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (r[di] !== deviceId) continue;
+      if (r[ti] < cutoff) continue;
+      if (r[vi] === null || r[vi] === undefined) continue;
+      out.push({ t: r[ti], v: r[vi] });
+    }
+    return out;
+  }
+
+  function dailySeries(deviceId, param) {
+    var span = rangeSeconds();
+    var cutoff = span === null ? -Infinity : now() - span;
+    var out = [];
+    var rows = state.data.daily || [];
+    for (var i = 0; i < rows.length; i++) {
+      var d = rows[i];
+      if (d.device_id !== deviceId) continue;
+      if (d.day < cutoff) continue;
+      var s = d[param];
+      if (!s) continue;
+      out.push({ t: d.day + DAY / 2, mean: s.mean, sd: s.sd, min: s.min, max: s.max, n: s.n });
+    }
+    return out;
+  }
+
+  function latestFor(deviceId) {
+    return (state.data.latest || {})[deviceId] || null;
+  }
+
+  function statusOf(deviceId, param) {
+    var latest = latestFor(deviceId);
+    var def = paramDef(param);
+    var stale = latest ? now() - latest.t : Infinity;
+    if (!latest || stale > 3 * 3600) return { kind: "offline", label: latest ? "no reading " + ago(stale) : "no data" };
+    if (latest.disconnected) return { kind: "offline", label: "device disconnected" };
+    if (latest.out_of_water) return { kind: "critical", label: "sensor out of water" };
+    var v = latest.values[param];
+    if (v === null || v === undefined) return { kind: "offline", label: "not reported" };
+    if (def.hard && (v < def.hard[0] || v > def.hard[1])) return { kind: "critical", label: "outside hard limits" };
+    if (def.band && (v < def.band[0] || v > def.band[1])) return { kind: "out-band", label: "outside working range" };
+    if (latest.slide_expires && latest.slide_expires - now() < 3 * DAY) {
+      return { kind: "out-band", label: "slide expires " + fmtDate(latest.slide_expires) };
+    }
+    return { kind: "in-band", label: "within working range" };
+  }
+
+  // ---- rendering: controls -------------------------------------------
+
+  function buildSegmented(container, items, activeKey, onPick) {
+    container.textContent = "";
+    items.forEach(function (item) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = item.label;
+      b.setAttribute("aria-pressed", item.key === activeKey ? "true" : "false");
+      b.addEventListener("click", function () { onPick(item.key); });
+      container.appendChild(b);
+    });
+  }
+
+  function renderControls() {
+    buildSegmented(
+      el("param-tabs"),
+      (state.data.parameters || []).map(function (p) { return { key: p.key, label: p.label }; }),
+      state.param,
+      function (key) { state.param = key; renderAll(); }
+    );
+    buildSegmented(el("range-tabs"), RANGES, state.range, function (key) {
+      state.range = key; renderAll();
+    });
+    var modeBtns = el("mode-tabs").querySelectorAll("button");
+    Array.prototype.forEach.call(modeBtns, function (b) {
+      b.setAttribute("aria-pressed", b.dataset.mode === state.mode ? "true" : "false");
+      b.onclick = function () { state.mode = b.dataset.mode; renderAll(); };
+    });
+  }
+
+  // ---- rendering: header + alerts -------------------------------------
+
+  function renderHeader() {
+    var site = state.data.site || {};
+    if (site.organisation) el("org").textContent = site.organisation;
+    if (site.title) { el("title").textContent = site.title; document.title = site.title; }
+    el("subtitle").textContent = site.subtitle || "";
+
+    var newest = 0;
+    var latest = state.data.latest || {};
+    for (var k in latest) if (latest[k].t > newest) newest = latest[k].t;
+    if (newest) {
+      el("fresh-value").textContent = fmtTime(newest, true);
+      el("fresh-label").textContent = "most recent reading · " + ago(now() - newest);
+    } else {
+      el("fresh-value").textContent = "no readings";
+      el("fresh-label").textContent = "";
+    }
+
+    var run = state.data.last_run;
+    el("prov-2").textContent = run
+      ? "Last harvest run " + fmtTime(run.finished_at, true) + " (" + run.status +
+        (run.readings_inserted ? ", " + run.readings_inserted + " new readings" : "") + ")."
+      : "";
+  }
+
+  function renderAlerts() {
+    var box = el("alerts");
+    box.textContent = "";
+    var items = [];
+    (state.data.devices || []).forEach(function (d) {
+      var st = statusOf(d.device_id, state.param);
+      if (st.kind === "in-band") return;
+      items.push({ kind: st.kind, text: d.sump + " — " + st.label });
+    });
+    if (!items.length) {
+      items.push({ kind: "good", text: "All " + (state.data.devices || []).length + " sumps reporting within the working range for " + paramDef(state.param).label.toLowerCase() });
+    }
+    items.forEach(function (it) {
+      var div = document.createElement("div");
+      div.className = "alert " + (it.kind === "out-band" ? "warning" : it.kind);
+      var dot = document.createElement("span");
+      dot.className = "dot";
+      div.appendChild(dot);
+      div.appendChild(document.createTextNode(it.text));
+      box.appendChild(div);
+    });
+  }
+
+  // ---- rendering: sparklines + panels ---------------------------------
+
+  function sparkPath(points, w, h, pad) {
+    if (points.length < 2) return null;
+    var lo = Infinity, hi = -Infinity;
+    points.forEach(function (p) { if (p.v < lo) lo = p.v; if (p.v > hi) hi = p.v; });
+    if (hi === lo) { hi = lo + 1; lo = lo - 1; }
+    var t0 = points[0].t, t1 = points[points.length - 1].t;
+    if (t1 === t0) t1 = t0 + 1;
+    var x = function (t) { return pad + (t - t0) / (t1 - t0) * (w - 2 * pad); };
+    var y = function (v) { return h - pad - (v - lo) / (hi - lo) * (h - 2 * pad); };
+    var d = "";
+    points.forEach(function (p, i) { d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.v).toFixed(1); });
+    return { d: d, x: x, y: y, lo: lo, hi: hi, t0: t0, t1: t1 };
+  }
+
+  function renderSpark(node, deviceId) {
+    var W = 260, H = 56, pad = 5;
+    node.setAttribute("viewBox", "0 0 " + W + " " + H);
+    node.setAttribute("preserveAspectRatio", "none");
+    node.textContent = "";
+
+    var pts = rawSeries(deviceId, state.param);
+    if (pts.length < 2) {
+      pts = dailySeries(deviceId, state.param).map(function (d) { return { t: d.t, v: d.mean }; });
+    }
+    if (pts.length > 400) {
+      var step = Math.ceil(pts.length / 400), thinned = [];
+      for (var i = 0; i < pts.length; i += step) thinned.push(pts[i]);
+      thinned.push(pts[pts.length - 1]);
+      pts = thinned;
+    }
+    var geo = sparkPath(pts, W, H, pad);
+    if (!geo) {
+      var t = svg("text", { x: W / 2, y: H / 2 + 4, "text-anchor": "middle", fill: "var(--muted)", "font-size": "11" });
+      t.textContent = "no data in window";
+      node.appendChild(t);
+      return;
+    }
+
+    var def = paramDef(state.param);
+    if (def.band) {
+      var yTop = Math.max(0, geo.y(def.band[1])), yBot = Math.min(H, geo.y(def.band[0]));
+      if (yBot > yTop) {
+        node.appendChild(svg("rect", { x: 0, y: yTop, width: W, height: yBot - yTop, fill: "var(--band)" }));
+      }
+    }
+    node.appendChild(svg("path", {
+      d: geo.d, fill: "none", stroke: "var(--series)", "stroke-width": "1.6",
+      "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke"
+    }));
+    var last = pts[pts.length - 1];
+    node.appendChild(svg("circle", {
+      cx: geo.x(last.t), cy: geo.y(last.v), r: 2.6,
+      fill: "var(--series)", stroke: "var(--surface)", "stroke-width": "1.4"
+    }));
+  }
+
+  function renderPanels() {
+    var host = el("systems");
+    host.textContent = "";
+    var devices = state.data.devices || [];
+    if (!devices.length) {
+      var e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "No devices yet. Map your Seneye device ids to sumps in config.json and run the harvester.";
+      host.appendChild(e);
+      return;
+    }
+
+    var order = [], groups = {};
+    devices.forEach(function (d) {
+      var key = d.system || "—";
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(d);
+    });
+    order.sort();
+
+    var def = paramDef(state.param);
+
+    order.forEach(function (sys) {
+      var section = document.createElement("section");
+      section.className = "system";
+      var head = document.createElement("div");
+      head.className = "system-head";
+      var h2 = document.createElement("h2");
+      h2.textContent = groups[sys][0].system_label || ("System " + sys);
+      var note = document.createElement("span");
+      note.className = "note";
+      var tanks = [];
+      groups[sys].forEach(function (d) { tanks = tanks.concat(d.tanks || []); });
+      note.textContent = groups[sys].length + " sump" + (groups[sys].length > 1 ? "s" : "") +
+        (tanks.length ? " · tanks " + tanks.join(", ") : "");
+      head.appendChild(h2); head.appendChild(note);
+      section.appendChild(head);
+
+      var grid = document.createElement("div");
+      grid.className = "panels";
+
+      groups[sys].forEach(function (d) {
+        var st = statusOf(d.device_id, state.param);
+        var latest = latestFor(d.device_id);
+        var value = latest ? latest.values[state.param] : null;
+
+        var panel = document.createElement("button");
+        panel.type = "button";
+        panel.className = "panel";
+        panel.setAttribute("aria-current", d.device_id === state.device ? "true" : "false");
+        panel.addEventListener("click", function () { state.device = d.device_id; renderAll(); });
+
+        var ph = document.createElement("div");
+        ph.className = "panel-head";
+        var left = document.createElement("div");
+        var sump = document.createElement("div");
+        sump.className = "sump";
+        sump.textContent = d.sump || d.device_id;
+        var tanksEl = document.createElement("div");
+        tanksEl.className = "tanks";
+        tanksEl.textContent = (d.tanks && d.tanks.length) ? "tanks " + d.tanks.join(", ") : (d.group || "");
+        left.appendChild(sump); left.appendChild(tanksEl);
+
+        var right = document.createElement("div");
+        right.className = "reading";
+        var val = document.createElement("div");
+        val.className = "val";
+        val.textContent = fmt(value, def.precision);
+        if (def.unit) {
+          var u = document.createElement("span");
+          u.className = "unit";
+          u.textContent = def.unit;
+          val.appendChild(u);
+        }
+        right.appendChild(val);
+
+        ph.appendChild(left); ph.appendChild(right);
+        panel.appendChild(ph);
+
+        var chip = document.createElement("span");
+        chip.className = "chip " + st.kind;
+        var dot = document.createElement("span");
+        dot.className = "dot";
+        chip.appendChild(dot);
+        chip.appendChild(document.createTextNode(st.label));
+        panel.appendChild(chip);
+
+        var spark = svg("svg", { class: "spark" });
+        panel.appendChild(spark);
+        grid.appendChild(panel);
+        renderSpark(spark, d.device_id);
+      });
+
+      section.appendChild(grid);
+      host.appendChild(section);
+    });
+  }
+
+  // ---- rendering: detail chart ----------------------------------------
+
+  function niceTicks(lo, hi, count) {
+    var span = hi - lo;
+    if (span <= 0) { return [lo]; }
+    var step = Math.pow(10, Math.floor(Math.log(span / count) / Math.LN10));
+    var err = (span / count) / step;
+    if (err >= 7.5) step *= 10; else if (err >= 3.5) step *= 5; else if (err >= 1.5) step *= 2;
+    var start = Math.ceil(lo / step) * step, ticks = [];
+    for (var v = start; v <= hi + step * 1e-6; v += step) ticks.push(Math.round(v / step) * step);
+    return ticks;
+  }
+
+  function renderDetail() {
+    var box = el("detail");
+    var device = null;
+    (state.data.devices || []).forEach(function (d) { if (d.device_id === state.device) device = d; });
+    if (!device) { box.hidden = true; return; }
+    box.hidden = false;
+
+    var def = paramDef(state.param);
+    el("detail-title").textContent = (device.sump || device.device_id) + " · " + def.label;
+    var latest = latestFor(device.device_id);
+    el("detail-meta").textContent =
+      ((device.tanks && device.tanks.length) ? "serves tanks " + device.tanks.join(", ") + " · " : "") +
+      (latest ? "last reading " + fmtTime(latest.t, true) : "no readings") +
+      (latest && latest.slide_serial ? " · slide " + latest.slide_serial : "");
+
+    var legend = el("detail-legend");
+    legend.textContent = "";
+    function legendItem(colour, label, opacity) {
+      var s = document.createElement("span");
+      var sw = document.createElement("span");
+      sw.className = "swatch";
+      sw.style.background = colour;
+      if (opacity) sw.style.opacity = opacity;
+      s.appendChild(sw);
+      s.appendChild(document.createTextNode(label));
+      legend.appendChild(s);
+    }
+    if (state.mode === "daily") {
+      legendItem("var(--series)", "daily mean");
+      legendItem("var(--series-soft)", "±1 SD");
+      legendItem("var(--series-faint)", "daily min–max");
+    } else {
+      legendItem("var(--series)", "reading");
+    }
+    if (def.band) legendItem("var(--band)", "working range " + def.band[0] + "–" + def.band[1] + (def.unit ? " " + def.unit : ""));
+    if (def.hard) legendItem("var(--critical)", "hard limit");
+
+    drawChart(device, def);
+  }
+
+  function drawChart(device, def) {
+    var node = el("chart");
+    node.textContent = "";
+    var W = 900, H = 340;
+    var m = { top: 14, right: 16, bottom: 28, left: 54 };
+    node.setAttribute("viewBox", "0 0 " + W + " " + H);
+    node.setAttribute("preserveAspectRatio", "none");
+
+    var daily = state.mode === "daily";
+    var series = daily ? dailySeries(device.device_id, state.param) : rawSeries(device.device_id, state.param);
+
+    if (series.length < 2) {
+      var t = svg("text", { x: W / 2, y: H / 2, "text-anchor": "middle", fill: "var(--muted)", "font-size": "13" });
+      t.textContent = daily
+        ? "Not enough daily statistics in this window."
+        : "No raw readings in this window — raw data covers the last " + (state.data.window_days ? "" : "") + "30 days; switch to daily mean for longer.";
+      node.appendChild(t);
+      return;
+    }
+
+    var lo = Infinity, hi = -Infinity, t0 = series[0].t, t1 = series[series.length - 1].t;
+    series.forEach(function (p) {
+      var vals = daily ? [p.min, p.max, p.mean - p.sd, p.mean + p.sd] : [p.v];
+      vals.forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
+    });
+    if (def.band) { lo = Math.min(lo, def.band[0]); hi = Math.max(hi, def.band[1]); }
+    if (hi === lo) { hi += 1; lo -= 1; }
+    var padV = (hi - lo) * 0.08;
+    lo -= padV; hi += padV;
+    if (t1 === t0) t1 = t0 + 1;
+
+    var x = function (tv) { return m.left + (tv - t0) / (t1 - t0) * (W - m.left - m.right); };
+    var y = function (v) { return H - m.bottom - (v - lo) / (hi - lo) * (H - m.top - m.bottom); };
+
+    // working range band
+    if (def.band) {
+      var yT = y(def.band[1]), yB = y(def.band[0]);
+      node.appendChild(svg("rect", {
+        x: m.left, y: Math.min(yT, yB), width: W - m.left - m.right,
+        height: Math.abs(yB - yT), fill: "var(--band)"
+      }));
+    }
+
+    // y grid + labels: only as many decimals as the tick step needs
+    var ticks = niceTicks(lo, hi, 5);
+    var step = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : (hi - lo);
+    var tickDp = Math.min(def.precision, Math.max(0, Math.ceil(-Math.log(step) / Math.LN10) + 1));
+    ticks.forEach(function (v) {
+      var yy = y(v);
+      node.appendChild(svg("line", {
+        x1: m.left, x2: W - m.right, y1: yy, y2: yy, stroke: "var(--grid)", "stroke-width": "1"
+      }));
+      var lbl = svg("text", {
+        x: m.left - 8, y: yy + 3.5, "text-anchor": "end", fill: "var(--muted)",
+        "font-size": "11", "font-family": "IBM Plex Mono, monospace"
+      });
+      lbl.textContent = fmt(v, tickDp);
+      node.appendChild(lbl);
+    });
+
+    // hard limits
+    if (def.hard) {
+      [def.hard[0], def.hard[1]].forEach(function (v) {
+        if (v < lo || v > hi) return;
+        node.appendChild(svg("line", {
+          x1: m.left, x2: W - m.right, y1: y(v), y2: y(v),
+          stroke: "var(--critical)", "stroke-width": "1", "stroke-dasharray": "4 4", opacity: "0.75"
+        }));
+      });
+    }
+
+    // x labels
+    var span = t1 - t0;
+    var withDate = span > DAY;
+    var xTickCount = 5;
+    for (var i = 0; i <= xTickCount; i++) {
+      var tv = t0 + span * i / xTickCount;
+      var xx = x(tv);
+      var lab = svg("text", {
+        x: xx, y: H - 9, "text-anchor": i === 0 ? "start" : (i === xTickCount ? "end" : "middle"),
+        fill: "var(--muted)", "font-size": "11", "font-family": "IBM Plex Mono, monospace"
+      });
+      lab.textContent = withDate ? fmtTime(tv, true).replace(", ", " ").slice(0, 6) : fmtTime(tv, false);
+      node.appendChild(lab);
+    }
+    node.appendChild(svg("line", {
+      x1: m.left, x2: W - m.right, y1: H - m.bottom, y2: H - m.bottom,
+      stroke: "var(--rule)", "stroke-width": "1"
+    }));
+
+    function areaPath(upper, lower) {
+      var d = "";
+      upper.forEach(function (p, i) { d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.v).toFixed(1); });
+      for (var i = lower.length - 1; i >= 0; i--) {
+        d += "L" + x(lower[i].t).toFixed(1) + " " + y(lower[i].v).toFixed(1);
+      }
+      return d + "Z";
+    }
+
+    if (daily) {
+      node.appendChild(svg("path", {
+        d: areaPath(
+          series.map(function (p) { return { t: p.t, v: p.max }; }),
+          series.map(function (p) { return { t: p.t, v: p.min }; })
+        ),
+        fill: "var(--series-faint)", stroke: "none"
+      }));
+      node.appendChild(svg("path", {
+        d: areaPath(
+          series.map(function (p) { return { t: p.t, v: p.mean + p.sd }; }),
+          series.map(function (p) { return { t: p.t, v: p.mean - p.sd }; })
+        ),
+        fill: "var(--series-soft)", stroke: "none"
+      }));
+    }
+
+    var line = "";
+    series.forEach(function (p, i) {
+      var v = daily ? p.mean : p.v;
+      line += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(v).toFixed(1);
+    });
+    node.appendChild(svg("path", {
+      d: line, fill: "none", stroke: "var(--series)", "stroke-width": "2",
+      "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke"
+    }));
+
+    // out-of-limit markers
+    if (def.hard) {
+      series.forEach(function (p) {
+        var v = daily ? p.mean : p.v;
+        if (v < def.hard[0] || v > def.hard[1]) {
+          node.appendChild(svg("circle", {
+            cx: x(p.t), cy: y(v), r: 4, fill: "var(--critical)",
+            stroke: "var(--surface)", "stroke-width": "1.5"
+          }));
+        }
+      });
+    }
+
+    // endpoint marker
+    var lastP = series[series.length - 1];
+    var lastV = daily ? lastP.mean : lastP.v;
+    node.appendChild(svg("circle", {
+      cx: x(lastP.t), cy: y(lastV), r: 4.5, fill: "var(--series)",
+      stroke: "var(--surface)", "stroke-width": "2"
+    }));
+
+    attachHover(node, series, { x: x, y: y, m: m, W: W, H: H, daily: daily, def: def });
+  }
+
+  function attachHover(node, series, geo) {
+    var crosshair = svg("line", {
+      x1: 0, x2: 0, y1: geo.m.top, y2: geo.H - geo.m.bottom,
+      stroke: "var(--accent)", "stroke-width": "1", opacity: "0"
+    });
+    var focus = svg("circle", { r: 4, fill: "var(--accent)", stroke: "var(--surface)", "stroke-width": "1.5", opacity: "0" });
+    node.appendChild(crosshair);
+    node.appendChild(focus);
+
+    var tip = el("tooltip");
+    var def = geo.def;
+
+    function move(evt) {
+      var rect = node.getBoundingClientRect();
+      var clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+      var px = (clientX - rect.left) / rect.width * geo.W;
+      var best = null, bestD = Infinity;
+      series.forEach(function (p) {
+        var d = Math.abs(geo.x(p.t) - px);
+        if (d < bestD) { bestD = d; best = p; }
+      });
+      if (!best) return;
+      var v = geo.daily ? best.mean : best.v;
+      crosshair.setAttribute("x1", geo.x(best.t));
+      crosshair.setAttribute("x2", geo.x(best.t));
+      crosshair.setAttribute("opacity", "0.55");
+      focus.setAttribute("cx", geo.x(best.t));
+      focus.setAttribute("cy", geo.y(v));
+      focus.setAttribute("opacity", "1");
+
+      var rows = "";
+      if (geo.daily) {
+        rows += '<div class="t-row"><span>mean</span><b>' + fmt(best.mean, def.precision) + '</b></div>';
+        rows += '<div class="t-row"><span>±1 SD</span><b>' + fmt(best.sd, def.precision) + '</b></div>';
+        rows += '<div class="t-row"><span>min–max</span><b>' + fmt(best.min, def.precision) + "–" + fmt(best.max, def.precision) + '</b></div>';
+        rows += '<div class="t-row"><span>n</span><b>' + best.n + '</b></div>';
+      } else {
+        rows += '<div class="t-row"><span>' + def.label + '</span><b>' + fmt(v, def.precision) + (def.unit ? " " + def.unit : "") + '</b></div>';
+      }
+      tip.innerHTML = '<div class="t-time">' +
+        (geo.daily ? fmtDate(best.t) : fmtTime(best.t, true)) + "</div>" + rows;
+      tip.style.opacity = "1";
+
+      var left = (geo.x(best.t) / geo.W) * rect.width + 14;
+      if (left > rect.width - 160) left -= 175;
+      tip.style.left = Math.max(4, left) + "px";
+      tip.style.top = Math.max(4, (geo.y(v) / geo.H) * rect.height - 10) + "px";
+    }
+
+    function leave() {
+      tip.style.opacity = "0";
+      crosshair.setAttribute("opacity", "0");
+      focus.setAttribute("opacity", "0");
+    }
+
+    node.addEventListener("mousemove", move);
+    node.addEventListener("mouseleave", leave);
+    node.addEventListener("touchstart", move, { passive: true });
+    node.addEventListener("touchmove", move, { passive: true });
+    node.addEventListener("touchend", leave);
+  }
+
+  // ---- rendering: table -----------------------------------------------
+
+  function tableRows() {
+    var span = rangeSeconds();
+    var cutoff = span === null ? -Infinity : now() - span;
+    var devices = {};
+    (state.data.devices || []).forEach(function (d) { devices[d.device_id] = d; });
+    var out = [];
+    (state.data.daily || []).forEach(function (d) {
+      if (d.day < cutoff) return;
+      var s = d[state.param];
+      if (!s) return;
+      var dev = devices[d.device_id] || {};
+      out.push([
+        dev.sump || d.device_id, fmtDate(d.day), s.n, s.min, s.max, s.mean, s.sd
+      ]);
+    });
+    out.sort(function (a, b) { return a[0] === b[0] ? (a[1] < b[1] ? 1 : -1) : (a[0] < b[0] ? -1 : 1); });
+    return out;
+  }
+
+  function renderTable() {
+    var def = paramDef(state.param);
+    var unit = def.unit ? " (" + def.unit + ")" : "";
+    var headers = ["Sump", "Day", "n", "Min" + unit, "Max" + unit, "Mean" + unit, "SD" + unit];
+    var table = el("stats-table");
+    var thead = table.querySelector("thead");
+    var tbody = table.querySelector("tbody");
+    thead.textContent = ""; tbody.textContent = "";
+
+    var tr = document.createElement("tr");
+    headers.forEach(function (h) {
+      var th = document.createElement("th");
+      th.textContent = h;
+      tr.appendChild(th);
+    });
+    thead.appendChild(tr);
+
+    var rows = tableRows();
+    rows.slice(0, 400).forEach(function (r) {
+      var row = document.createElement("tr");
+      r.forEach(function (cell, i) {
+        var td = document.createElement("td");
+        td.textContent = i >= 3 ? fmt(cell, def.precision) : cell;
+        row.appendChild(td);
+      });
+      tbody.appendChild(row);
+    });
+
+    el("table-note").textContent = rows.length
+      ? rows.length + " device-days of " + def.label.toLowerCase() +
+        (rows.length > 400 ? " (showing the most recent 400)" : "")
+      : "No daily statistics in this window.";
+
+    el("copy-csv").onclick = function () {
+      var lines = [headers.join(",")];
+      rows.forEach(function (r) { lines.push(r.join(",")); });
+      var text = lines.join("\n");
+      var done = function () {
+        el("copy-csv").textContent = "Copied";
+        setTimeout(function () { el("copy-csv").textContent = "Copy table as CSV"; }, 1800);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { window.prompt("Copy the CSV:", text); });
+      } else {
+        window.prompt("Copy the CSV:", text);
+      }
+    };
+  }
+
+  // ---- boot ------------------------------------------------------------
+
+  function renderAll() {
+    renderControls();
+    renderHeader();
+    renderAlerts();
+    renderDetail();
+    renderPanels();
+    renderTable();
+  }
+
+  function start(data) {
+    state.data = data;
+    state.tz = (data.site && data.site.timezone) || "Europe/Gibraltar";
+    var params = data.parameters || [];
+    state.param = params.length ? params[0].key : "temperature";
+    var devices = data.devices || [];
+    state.device = devices.length ? devices[0].device_id : null;
+    renderAll();
+  }
+
+  function fail(message) {
+    var host = el("systems");
+    host.textContent = "";
+    var e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = message;
+    host.appendChild(e);
+  }
+
+  if (window.NURSERY_DATA) {
+    start(window.NURSERY_DATA);
+  } else {
+    fetch("data/nursery.json", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(start)
+      .catch(function (err) {
+        fail("Could not load data/nursery.json (" + err.message + "). Run the harvester, or serve this folder over HTTP rather than opening the file directly.");
+      });
+  }
+})();
+</script>
+</body>
+</html>
