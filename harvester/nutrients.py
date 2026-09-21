@@ -62,18 +62,30 @@ NUMERIC_FIELDS = (
     "temp_c", "salinity_ppt", "ph", "dkh", "no3", "no2", "nh3", "po4", "ca", "mg",
 )
 
-# What each analyte is called and what it is measured in, for the dashboard.
+# What each analyte is called, what it is measured in, and which family it
+# belongs to. Physical properties describe the state of the water; chemical
+# ones are what is dissolved in it. The dashboard groups the two.
 ANALYTES = [
-    ("no3", "Nitrate (NO₃⁻)", "mg/L", 2),
-    ("no2", "Nitrite (NO₂⁻)", "mg/L", 3),
-    ("nh3", "Ammonia (NH₃)", "mg/L", 3),
-    ("po4", "Phosphate (PO₄³⁻)", "mg/L", 2),
-    ("salinity_ppt", "Salinity", "ppt", 2),
-    ("dkh", "Carbonate hardness", "°dKH", 1),
-    ("ca", "Calcium (Ca²⁺)", "mg/L", 0),
-    ("mg", "Magnesium (Mg²⁺)", "mg/L", 0),
-    ("ph", "pH (spot)", "", 2),
-    ("temp_c", "Temperature (spot)", "°C", 1),
+    # physical
+    ("temp_c", "Temperature", "\u00b0C", 1, "physical"),
+    ("salinity_ppt", "Salinity", "ppt", 2, "physical"),
+    ("ph", "pH", "", 2, "physical"),
+    ("dkh", "Carbonate hardness", "\u00b0dKH", 1, "physical"),
+    # chemical
+    # Units are as the kits report them. In seawater 1 ppm is about 1.03 mg/L
+    # (a litre weighs ~1.026 kg), so the reference ranges below are the same
+    # numbers either way and no conversion is applied.
+    ("no3", "Nitrate (NO\u2083\u207b)", "mg/L", 2, "chemical"),
+    ("no2", "Nitrite (NO\u2082\u207b)", "mg/L", 3, "chemical"),
+    ("nh3", "Ammonia (NH\u2083)", "mg/L", 3, "chemical"),
+    ("po4", "Phosphate (PO\u2084\u00b3\u207b)", "ppm", 2, "chemical"),
+    ("ca", "Calcium (Ca\u00b2\u207a)", "ppm", 0, "chemical"),
+    ("mg", "Magnesium (Mg\u00b2\u207a)", "ppm", 0, "chemical"),
+]
+
+ANALYTE_GROUPS = [
+    ("physical", "Physical"),
+    ("chemical", "Chemical"),
 ]
 
 
