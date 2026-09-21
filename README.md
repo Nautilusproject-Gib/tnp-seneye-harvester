@@ -91,6 +91,19 @@ For a snapshot with the data baked in — no server, no fetch — run:
 python tools/build_artifact.py --out build/nursery-snapshot.html
 ```
 
+### Embedding it in a page
+
+`embed/embed-snippet.html` is a self-contained block for the website: an iframe
+and a short script, no stylesheet and no library. The only line to change is the
+`src`. Hand it to whoever maintains the site and it drops into a page as is.
+
+The dashboard measures itself and posts its height to the host page, so the
+frame grows to fit rather than scrolling inside itself. The host script accepts
+that message only from its own frame, and only when the origin matches, then
+sanity-checks the number before applying it. If the message never arrives, the
+frame keeps the fallback height in its style attribute and scrolls internally,
+so a strict content policy degrades rather than breaks.
+
 ## Where the data lives
 
 `DATABASE_URL` decides, and nothing else in the code changes:
@@ -402,11 +415,91 @@ These are operating set points for this nursery, not published tolerances for
 *Posidonia oceanica* — edit them to match the protocol, and remember the
 dashboard states them as TNP's own.
 
+## Importing history from Seneye
+
+The API only ever serves the last reading, so anything from before the harvester
+started has to come from Seneye directly. `tools/import_history.py` loads those
+files into the same `readings` table the harvester writes to; once they are in,
+the dashboard treats old and new readings identically.
+
+### What to ask Seneye for
+
+Ask support for a **CSV export of all readings** for the account, and be
+specific about four things, because they are the four that cost a re-export if
+they come back wrong:
+
+1. **CSV**, not PDF or a screenshot of a chart.
+2. **Every device**, with either one file per device or a device id column in a
+   combined file. A file with neither can still be imported, one device at a
+   time, with `--sump`.
+3. **The full period**, with the date the record starts.
+4. **Which timezone the timestamps are in** — UTC or Gibraltar local time. This
+   is the one that matters most. Getting it wrong shifts a year of readings by
+   an hour or two, and nothing about the result looks broken afterwards.
+
+Columns wanted: date/time, device identifier, temperature, pH and NH₃. Anything
+else in the file is ignored rather than guessed at.
+
+### Loading it
+
+```bash
+python tools/import_history.py --dry-run --timezone Europe/Gibraltar exports/
+python tools/import_history.py --timezone Europe/Gibraltar exports/
+python -m harvester.harvest --export-only
+```
+
+Always run `--dry-run` first. It prints the columns it matched, how many rows it
+could read, the period they span, two example rows and the reason for anything
+it would skip — and writes nothing. If the columns it matched are not the ones
+you expected, that is visible before anything reaches the database.
+
+| Option | What it does |
+|---|---|
+| `--timezone` | IANA name the export's timestamps are in. Defaults to `UTC`. |
+| `--sump` | Sump code for a file that does not name its device, e.g. `SA12`. |
+| `--month-first` | Read ambiguous dates as MM/DD. The default is DD/MM. |
+| `--tag` | Written to `slide_serial`. Default `IMPORTED`. |
+| `--dry-run` | Report only; write nothing. |
+| `--database-url` | Import somewhere other than the default database. |
+
+Files can be given as paths, glob patterns or a folder of CSVs.
+
+### How it decides things
+
+**Columns** are matched by heading rather than position, so the export's layout
+does not matter as long as the headings are recognisable (`Date/Time`,
+`Timestamp`, `Temp (°C)`, `pH`, `NH3 (mg/L)`, and so on). Preamble lines above
+the header row are skipped: the first row in the first fifteen that has both a
+date column and a measurement column is taken as the header. Separate `Date` and
+`Time` columns work, in either order, as do unix seconds and milliseconds.
+
+**Devices** are resolved in order: a device id that matches `config.json`, then
+a name or sump column, then `--sump`, then the sump code in the filename. A row
+that matches none of those is counted and reported rather than attributed to a
+guess.
+
+**Re-running is safe.** Rows are keyed on `(device_id, reading_time)` and
+nothing is ever overwritten, so importing the same file twice adds nothing the
+second time, and a historical file cannot clobber a reading the harvester
+collected. Imported rows carry `IMPORTED` in `slide_serial`, so they stay
+identifiable:
+
+```sql
+SELECT COUNT(*) FROM readings WHERE slide_serial = 'IMPORTED';
+DELETE FROM readings WHERE slide_serial = 'IMPORTED';   -- to start the import over
+```
+
+If the history is longer than a year, raise `export.window_days` in
+`config.json` before rebuilding, or the dashboard will only summarise the most
+recent 365 days of it.
+
 ## Limitations worth knowing
 
 - The public Seneye API serves the **last** reading only; there is no historical
   endpoint. The record therefore starts the day the harvester starts, and its
-  resolution is the polling interval, not the device's own.
+  resolution is the polling interval, not the device's own. Anything from before
+  that has to be asked of Seneye as a file and loaded with
+  `tools/import_history.py` (see *Importing history from Seneye* above).
 - Credentials are the Seneye account e-mail and password sent as query
   parameters. That is what the API offers. Keep them in Actions secrets or an
   environment file; never in `config.json`.
@@ -439,6 +532,6 @@ dashboard/    index.html + data/   (public)
 board/        index.html + data/   (internal maintenance board, not published)
 templates/    maintenance sheet template
 sql/          schema for PostgreSQL and MySQL
-tools/        mock_data.py · build_artifact.py
+tools/        mock_data.py · import_history.py · build_artifact.py
 tests/        unit tests
 ```
