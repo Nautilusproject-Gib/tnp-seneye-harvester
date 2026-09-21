@@ -26,10 +26,11 @@ from typing import Any
 API_ROOT = "https://api.seneye.com/v1"
 USER_AGENT = "tnp-seneye-harvester/1.0 (+https://github.com/Nautilusproject-Gib)"
 
-# Parameters the Seneye reports. Not every device reports every one: a
-# Home/Aquarium unit gives temperature, pH and NH3; a Reef unit adds the light
-# metrics; a Pond unit reports O2 in place of some of these.
-PARAMETERS = ("temperature", "ph", "nh3", "nh4", "o2", "par", "lux", "kelvin")
+# Parameters the Seneye actually measures and that the nursery uses. The light
+# metrics (PAR, lux, colour temperature) are dropped: the probes sit in sumps
+# rather than in lit tanks, so they only ever read zero. NH4 and O2 are kept as
+# columns because the harvester fills them from the models in derived.py.
+PARAMETERS = ("temperature", "ph", "nh3", "nh4", "o2")
 
 
 class SeneyeError(RuntimeError):
@@ -198,17 +199,6 @@ def parse_reading(
         st = _as_int(block.get("status"))
         if st is not None:
             statuses[name] = st
-
-    # Reef units nest the light metrics under exps.light
-    light = exps.get("light")
-    if isinstance(light, dict):
-        for src, dest in (("par", "par"), ("lux", "lux"), ("kelvin", "kelvin")):
-            val = _as_float(light.get(src) if src in light else None)
-            if val is not None:
-                values.setdefault(dest, val)
-        curr = _as_float(light.get("curr"))
-        if curr is not None:
-            values.setdefault("par", curr)
 
     return Reading(
         device_id=device_id,

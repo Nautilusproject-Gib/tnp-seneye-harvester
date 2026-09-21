@@ -23,6 +23,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from .derived import DERIVED_PARAMETERS, enrich, salinity_by_sump
 from .nutrients import ANALYTE_GROUPS as NUTRIENT_GROUPS
 from .nutrients import ANALYTES as NUTRIENT_ANALYTES
 from .seneye import PARAMETERS
@@ -51,9 +52,23 @@ def build_payload(
         "SELECT * FROM readings WHERE reading_time >= ? ORDER BY reading_time",
         (cutoff,),
     )
+    # Modelled fields are added to the rows here rather than stored, so a
+    # change to the model shows up on the next export without re-harvesting.
+    sump_of = {d["device_id"]: d.get("sump_code") for d in devices}
+    derived_cfg = config.get("derived", {}) or {}
+    produced = enrich(
+        all_rows,
+        sump_of,
+        salinity_by_sump(store, derived_cfg.get("default_salinity")),
+        config,
+    )
+
     rows = [r for r in all_rows if int(r["reading_time"]) >= raw_cutoff]
 
-    active = [p for p in PARAMETERS if any(r.get(p) is not None for r in all_rows)]
+    measured = [p for p in PARAMETERS
+                if p not in DERIVED_PARAMETERS
+                and any(r.get(p) is not None for r in all_rows)]
+    active = measured + [p for p in produced]
     if not active:
         active = [p for p in ("temperature", "ph", "nh3") if p in PARAMETERS]
 
@@ -119,6 +134,8 @@ def build_payload(
             "precision": params_cfg.get(p, {}).get("precision", 2),
             "band": params_cfg.get(p, {}).get("band"),
             "hard": params_cfg.get(p, {}).get("hard"),
+            "modelled": p in DERIVED_PARAMETERS,
+            "model_note": params_cfg.get(p, {}).get("model_note"),
         }
         for p in active
     ]
