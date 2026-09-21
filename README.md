@@ -415,6 +415,49 @@ These are operating set points for this nursery, not published tolerances for
 *Posidonia oceanica* — edit them to match the protocol, and remember the
 dashboard states them as TNP's own.
 
+## Slide replacement countdown
+
+A Seneye slide lasts 30 days and is changed at the unit in the sump, so the
+countdown is per sump, not per tank. The dashboard shows it in two places: a
+strip above the panels giving the soonest one ("Replace slide in 23 days — all
+9 sumps, due 14 Oct 2026"), and a small chip on each sump's panel. Green with
+more than a week to go, amber inside the last week, red once it is overdue.
+
+**Recording a slide change** is a two-line edit in `config.json`, and needs
+nothing installed:
+
+```json
+"slides": {
+  "enabled": true,
+  "interval_days": 30,
+  "warn_days": 7,
+  "trust_sensor": true,
+  "default_changed": "2026-09-14",
+  "changed": {
+    "SA12": "2026-10-02"
+  }
+}
+```
+
+`default_changed` covers every sump. An entry under `changed` overrides it for
+that one sump, which is what you want when a single slide gets replaced out of
+step with the rest. When the whole nursery is done in one session, move
+`default_changed` to that date and empty `changed` again.
+
+The edit can be made in GitHub's web editor. The next scheduled harvest rebuilds
+the export and the dashboard picks it up — there is no need to run anything.
+
+**Where the date comes from.** If the Seneye itself reports an expiry date for
+its current slide, that is used in preference, because the device knows when its
+own slide was registered and a written note can be forgotten. The logged date is
+the fallback. The strip says which of the two it is using, so a slide that was
+changed but not logged, or logged but not changed, is visible rather than
+silently wrong. Set `trust_sensor` to `false` to go by the logged dates only.
+
+**The days are counted in the browser**, not at export time, so the number a
+student reads is right for the day they are reading it even if the last harvest
+ran hours ago.
+
 ## Importing history from Seneye
 
 The API only ever serves the last reading, so anything from before the harvester
@@ -440,7 +483,28 @@ they come back wrong:
 Columns wanted: date/time, device identifier, temperature, pH and NH₃. Anything
 else in the file is ignored rather than guessed at.
 
-### Loading it
+### Loading it, without installing anything
+
+The **Import Seneye history** workflow does the whole thing in GitHub, so no
+Python is needed on your own machine:
+
+1. On the repo's **Code** tab, open `data/history/` and use *Add file → Upload
+   files* to put the CSVs Seneye sent there. Commit.
+2. Go to **Actions → Import Seneye history → Run workflow**.
+3. Set the timezone Seneye confirmed. Leave **dry run** ticked. Run it.
+4. Open the run's log. It lists the columns it matched, how many rows it could
+   read, the period they span and the reason for anything it would skip.
+   Nothing has been written at this point.
+5. If that looks right, run it again with **dry run** unticked. The readings go
+   into the database, the export is rebuilt and both are committed.
+
+The two remaining options are there for awkward files: `sump` names the device
+for a file that does not identify itself, and `month first` reads ambiguous
+dates as MM/DD.
+
+### Loading it from a command line
+
+If you do have Python to hand:
 
 ```bash
 python tools/import_history.py --dry-run --timezone Europe/Gibraltar exports/
@@ -532,6 +596,7 @@ dashboard/    index.html + data/   (public)
 board/        index.html + data/   (internal maintenance board, not published)
 templates/    maintenance sheet template
 sql/          schema for PostgreSQL and MySQL
+data/history/ historical Seneye exports waiting to be imported
 tools/        mock_data.py · import_history.py · build_artifact.py
 tests/        unit tests
 ```
