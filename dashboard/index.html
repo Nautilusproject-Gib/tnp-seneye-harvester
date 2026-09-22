@@ -268,6 +268,12 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 }
 .insitu-card .stats .k{color:var(--muted);margin-right:3px}
 
+.mode-note{
+  display:block;font-size:11.5px;color:var(--muted);margin-top:6px;max-width:46ch;
+  /* the control block uppercases its label; this is a sentence, not a label */
+  text-transform:none;letter-spacing:normal;font-weight:400;
+}
+.segmented button[disabled]{opacity:.45;cursor:not-allowed}
 .chips{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
 .chip.slide{font-family:"IBM Plex Mono",monospace;letter-spacing:.02em}
 .chip.slide .dot{border-radius:2px;width:7px;height:7px}
@@ -746,6 +752,72 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
 
 
+  // The export carries every individual reading for the recent window only
+  // (raw_days, 30 by default) and daily statistics for the whole record, so the
+  // file the browser downloads stays small as the years accumulate. That means
+  // "Raw readings" cannot answer a 90-day or All request: it has nothing to
+  // draw past the raw window. Left alone it silently drew the last 30 days
+  // whichever window was picked, so 30, 90 and All looked identical.
+  var rawFloor = null;
+  // A run of readings with no gap big enough to be an outage. Drawing one
+  // line across a two-month gap invents a smooth trend through a period when
+  // the sensor was not reporting at all, which on this dashboard would be
+  // read as data. Gaps are left as gaps instead.
+  function runsOf(points) {
+    if (points.length < 2) return points.length ? [points] : [];
+    var gaps = [];
+    for (var i = 1; i < points.length; i++) gaps.push(points[i].t - points[i - 1].t);
+    var sorted = gaps.slice().sort(function (a, b) { return a - b; });
+    var median = sorted[Math.floor(sorted.length / 2)] || 0;
+    // Four times the usual spacing, and never less than a couple of hours, so
+    // ordinary jitter in the polling interval does not chop the line up.
+    var limit = Math.max(median * 4, 7200);
+    var runs = [], run = [points[0]];
+    for (i = 1; i < points.length; i++) {
+      if (points[i].t - points[i - 1].t > limit) { runs.push(run); run = []; }
+      run.push(points[i]);
+    }
+    runs.push(run);
+    return runs;
+  }
+
+  function oldestRaw() {
+    if (rawFloor === null) {
+      var ti = colIndex("t"), rows = state.data.readings || [];
+      rawFloor = Infinity;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i][ti] < rawFloor) rawFloor = rows[i][ti];
+      }
+    }
+    return rawFloor;
+  }
+
+  // The oldest day the record reaches, which lives in the daily statistics
+  // rather than the raw rows.
+  var recordFloor = null;
+  function oldestRecord() {
+    if (recordFloor === null) {
+      recordFloor = Infinity;
+      (state.data.daily || []).forEach(function (d) {
+        if (d.day < recordFloor) recordFloor = d.day;
+      });
+      if (recordFloor === Infinity) recordFloor = oldestRaw();
+    }
+    return recordFloor;
+  }
+
+  function rawCoversWindow() {
+    if (oldestRaw() === Infinity) return false;       // no raw rows at all
+    // A little slack: the oldest reading will not sit exactly on a boundary.
+    var start = rangeSeconds() === null ? oldestRecord() : now() - rangeSeconds();
+    return start >= oldestRaw() - 3600;
+  }
+
+  // What the chart will actually draw, as opposed to what the button says.
+  function drawingDaily() {
+    return state.mode === "daily" || !rawCoversWindow();
+  }
+
   function rawSeries(deviceId, param) {
     var ti = colIndex("t"), vi = colIndex(param), di = colIndex("device_id");
     if (vi < 0) return [];
@@ -826,10 +898,33 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       state.range = key; renderAll();
     });
     var modeBtns = el("mode-tabs").querySelectorAll("button");
+    var covered = rawCoversWindow();
     Array.prototype.forEach.call(modeBtns, function (b) {
-      b.setAttribute("aria-pressed", b.dataset.mode === state.mode ? "true" : "false");
+      var isRaw = b.dataset.mode === "raw";
+      // Beyond the raw window there are no individual readings to show, so the
+      // button is disabled and says why rather than appearing to work.
+      b.disabled = isRaw && !covered;
+      b.title = b.disabled
+        ? "Individual readings are kept for the recent window only. Over "
+          + windowPhrase() + " the chart shows daily means."
+        : "";
+      b.setAttribute("aria-pressed",
+                     b.dataset.mode === (drawingDaily() ? "daily" : "raw")
+                     ? "true" : "false");
       b.onclick = function () { state.mode = b.dataset.mode; renderAll(); };
     });
+
+    var note = el("mode-note");
+    if (!note) {
+      note = document.createElement("div");
+      note.id = "mode-note";
+      note.className = "mode-note";
+      el("mode-tabs").parentNode.appendChild(note);
+    }
+    note.textContent = covered ? "" :
+      "individual readings go back to " + fmtDate(oldestRaw()) +
+      "; earlier than that the chart shows daily means";
+    note.hidden = covered;
   }
 
   // ---- rendering: header + alerts -------------------------------------
@@ -896,12 +991,14 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     var x = function (t) { return pad + (t - t0) / (t1 - t0) * (w - 2 * pad); };
     var y = function (v) { return h - pad - (v - lo) / (hi - lo) * (h - 2 * pad); };
     var d = "";
-    points.forEach(function (p, i) { d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.v).toFixed(1); });
+    runsOf(points).forEach(function (run) {
+      run.forEach(function (p, i) { d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.v).toFixed(1); });
+    });
     return { d: d, x: x, y: y, lo: lo, hi: hi, t0: t0, t1: t1 };
   }
 
   function seriesFor(deviceId) {
-    var pts = rawSeries(deviceId, state.param);
+    var pts = rawCoversWindow() ? rawSeries(deviceId, state.param) : [];
     var resolution = "readings";
     if (pts.length < 2) {
       pts = dailySeries(deviceId, state.param).map(function (d) {
@@ -947,7 +1044,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     // what IT draws, which is the daily series in daily mode and the raw
     // readings otherwise. Reusing the panel's numbers here would quietly
     // report something other than the line on screen.
-    if (state.mode === "daily") {
+    if (drawingDaily()) {
       var days = dailySeries(deviceId, state.param);
       if (!days.length) return null;
       var lo = Infinity, hi = -Infinity, weighted = 0, n = 0;
@@ -1475,7 +1572,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       s.appendChild(document.createTextNode(label));
       legend.appendChild(s);
     }
-    if (state.mode === "daily") {
+    if (drawingDaily()) {
       legendItem("var(--series)", "daily mean");
       legendItem("var(--series-soft)", "±1 SD");
       legendItem("var(--series-faint)", "daily min–max");
@@ -1513,7 +1610,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
     node.setAttribute("viewBox", "0 0 " + W + " " + H);
     node.setAttribute("preserveAspectRatio", "none");
 
-    var daily = state.mode === "daily";
+    var daily = drawingDaily();
     var rollSpan = null;
     var series = daily ? dailySeries(device.device_id, state.param) : rawSeries(device.device_id, state.param);
 
@@ -1653,36 +1750,51 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
       }));
     }
 
-    function areaPath(upper, lower) {
+    var runs = runsOf(series);
+
+    // One closed shape per run, so a ribbon stops at an outage too.
+    function areaPath(upperOf, lowerOf) {
       var d = "";
-      upper.forEach(function (p, i) { d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.v).toFixed(1); });
-      for (var i = lower.length - 1; i >= 0; i--) {
-        d += "L" + x(lower[i].t).toFixed(1) + " " + y(lower[i].v).toFixed(1);
-      }
-      return d + "Z";
+      runs.forEach(function (run) {
+        if (run.length < 2) return;
+        run.forEach(function (p, i) {
+          var u = upperOf(p);
+          d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(u).toFixed(1);
+        });
+        for (var i = run.length - 1; i >= 0; i--) {
+          d += "L" + x(run[i].t).toFixed(1) + " " + y(lowerOf(run[i])).toFixed(1);
+        }
+        d += "Z";
+      });
+      return d;
     }
 
     if (daily) {
       node.appendChild(svg("path", {
-        d: areaPath(
-          series.map(function (p) { return { t: p.t, v: p.max }; }),
-          series.map(function (p) { return { t: p.t, v: p.min }; })
-        ),
+        d: areaPath(function (p) { return p.max; }, function (p) { return p.min; }),
         fill: "var(--series-faint)", stroke: "none"
       }));
       node.appendChild(svg("path", {
-        d: areaPath(
-          series.map(function (p) { return { t: p.t, v: p.mean + p.sd }; }),
-          series.map(function (p) { return { t: p.t, v: p.mean - p.sd }; })
-        ),
+        d: areaPath(function (p) { return p.mean + p.sd; },
+                    function (p) { return p.mean - p.sd; }),
         fill: "var(--series-soft)", stroke: "none"
       }));
     }
 
     var line = "";
-    series.forEach(function (p, i) {
-      var v = daily ? p.mean : p.v;
-      line += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(v).toFixed(1);
+    runs.forEach(function (run) {
+      run.forEach(function (p, i) {
+        var v = daily ? p.mean : p.v;
+        line += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(v).toFixed(1);
+      });
+      // A single reading marooned between two outages still deserves to show.
+      if (run.length === 1) {
+        var only = daily ? run[0].mean : run[0].v;
+        node.appendChild(svg("circle", {
+          cx: x(run[0].t), cy: y(only), r: 2,
+          fill: "var(--series)", stroke: "none"
+        }));
+      }
     });
     node.appendChild(svg("path", {
       d: line, fill: "none", stroke: "var(--series)", "stroke-width": "2",
@@ -2643,6 +2755,7 @@ footer.notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;backgro
 
   function start(data) {
     state.data = data;
+    rawFloor = recordFloor = null;
     state.tz = (data.site && data.site.timezone) || "Europe/Gibraltar";
     var params = data.parameters || [];
     state.param = params.length ? params[0].key : "temperature";
