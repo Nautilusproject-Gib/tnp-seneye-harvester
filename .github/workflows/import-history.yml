@@ -23,6 +23,7 @@ on:
         default: "UTC"
         type: choice
         options:
+          - Europe/London
           - UTC
           - Europe/Gibraltar
       folder:
