@@ -785,6 +785,50 @@ class TestImportEndToEnd(unittest.TestCase):
         rows = self.store.query("SELECT * FROM devices")
         self.assertEqual(rows[0]["last_seen"], now)
 
+    def test_dry_run_reports_the_overlap_with_what_is_already_stored(self):
+        now = int(time.time() // 1800 * 1800)
+        self.store.upsert_device("168779", "SA12", 1, "SA12", "A", "SA12", now)
+        self.store.insert_readings([{
+            "device_id": "168779", "reading_time": now - 1800, "fetched_at": now,
+            "temperature": 17.2, "ph": 8.01, "nh3": 0.004,
+        }])
+        when = dt.datetime.fromtimestamp(now - 1800, dt.timezone.utc)
+        path = self.write("history.csv", (
+            "Timestamp,Device ID,Temp,pH,NH3\n"
+            + when.strftime("%Y-%m-%d %H:%M") + ",168779,17.2,8.01,0.004\n"
+            + (when - dt.timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M")
+            + ",168779,17.3,8.02,0.004\n"
+        ))
+        read, written, skipped = ih.import_file(path, self.store, CONFIG, Args(dry_run=True))
+        self.assertEqual((read, written), (2, 0))
+        self.assertEqual(skipped["_already"], 1)
+
+    def test_a_shifted_export_collides_but_does_not_agree(self):
+        """The timezone check: same timestamps, different numbers."""
+        now = int(time.time() // 1800 * 1800)
+        self.store.upsert_device("168779", "SA12", 1, "SA12", "A", "SA12", now)
+        rows = []
+        for i in range(8):
+            rows.append({"device_id": "168779", "reading_time": now - i * 1800,
+                         "fetched_at": now, "temperature": 17.0 + i * 0.5,
+                         "ph": 8.0, "nh3": 0.004})
+        self.store.insert_readings(rows)
+        batch_same = [{"device_id": "168779", "reading_time": r["reading_time"],
+                       "temperature": r["temperature"], "ph": 8.0, "nh3": 0.004}
+                      for r in rows]
+        already, agreeing = ih.compare_existing(self.store, batch_same)
+        self.assertEqual((already, agreeing), (8, 8))
+
+        # The same readings shifted by an hour: they still land on stored
+        # timestamps, but on the wrong ones, so the values no longer agree.
+        batch_shifted = [{"device_id": "168779",
+                          "reading_time": r["reading_time"] - 3600,
+                          "temperature": r["temperature"], "ph": 8.0,
+                          "nh3": 0.004} for r in rows]
+        already, agreeing = ih.compare_existing(self.store, batch_shifted)
+        self.assertGreater(already, 0)
+        self.assertLess(agreeing, already)
+
     def test_a_file_with_no_usable_header_is_skipped_quietly(self):
         path = self.write("notes.csv", "some,random,notes\na,b,c\n")
         self.assertEqual(ih.import_file(path, self.store, CONFIG, Args()),
