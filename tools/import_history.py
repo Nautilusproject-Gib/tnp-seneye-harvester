@@ -271,6 +271,43 @@ def collapse_repeats(batch) -> tuple[list, int]:
     return out, collapsed
 
 
+def held_by_minute(store, batch) -> dict:
+    """What the database already holds over this batch's period, by the minute.
+
+    The harvester stores the reading time the API gives it, seconds and all
+    (19:58:02). These exports carry only the minute (19:58). The same reading
+    therefore misses itself by a few seconds, and keying on the exact second
+    would import a second copy of everything the harvester had already
+    collected.
+
+    Matching on the minute fixes that without risking a false match: the
+    smallest gap between two genuinely different readings anywhere in TNP's
+    export is 60 seconds, so two readings never share a minute. It assumes the
+    export truncates the seconds rather than rounding them, which is the usual
+    behaviour and which the one exactly-matching row in the first dry run bears
+    out.
+    """
+    if not batch:
+        return {}
+    stamps = [row["reading_time"] for row in batch]
+    try:
+        rows = store.query(
+            "SELECT * FROM readings "
+            "WHERE reading_time >= ? AND reading_time <= ?",
+            (min(stamps) - 60, max(stamps) + 60),
+        )
+    except Exception:
+        return {}
+    return {(r["device_id"], int(r["reading_time"]) // 60): r for r in rows}
+
+
+def drop_already_held(batch, held) -> tuple[list, int]:
+    """Batch minus the readings the database already has."""
+    keep = [row for row in batch
+            if (row["device_id"], row["reading_time"] // 60) not in held]
+    return keep, len(batch) - len(keep)
+
+
 def compare_existing(store, batch) -> tuple[int, int]:
     """(rows already in the database, rows that also agree with what is there).
 
@@ -280,30 +317,20 @@ def compare_existing(store, batch) -> tuple[int, int]:
     Those rows are skipped rather than duplicated, so an overlap costs nothing.
 
     The second is the timezone check, and it is the one worth reading. Counting
-    collisions alone proves nothing: readings sit on a regular half-hourly
-    grid, so an export an hour or two out still lands on timestamps that exist
-    -- it just lands on the wrong ones. Comparing the values tells the two
-    apart. Same timestamps AND same numbers means the export is being read in
-    the timezone it was written in. Same timestamps but different numbers means
-    it is being shifted onto its neighbours, and the whole year would go in
-    displaced by that much.
+    collisions alone proves nothing: readings sit on a regular grid, so an
+    export an hour or two out still lands on times that exist -- it just lands
+    on the wrong ones. Comparing the values tells the two apart. Same times AND
+    same numbers means the export is being read in the timezone it was written
+    in. Same times but different numbers means it is being shifted onto its
+    neighbours, and the whole year would go in displaced by that much.
     """
     if not batch:
         return 0, 0
-    stamps = [row["reading_time"] for row in batch]
-    try:
-        rows = store.query(
-            "SELECT * FROM readings "
-            "WHERE reading_time >= ? AND reading_time <= ?",
-            (min(stamps), max(stamps)),
-        )
-    except Exception:
-        return 0, 0
-    held = {(r["device_id"], int(r["reading_time"])): r for r in rows}
+    held = held_by_minute(store, batch)
 
     already = agreeing = 0
     for row in batch:
-        stored = held.get((row["device_id"], row["reading_time"]))
+        stored = held.get((row["device_id"], row["reading_time"] // 60))
         if stored is None:
             continue
         already += 1
@@ -451,9 +478,11 @@ def import_file(path, store, config, args):
         print(f"    registered device {device_id}, which the harvester had not "
               "polled yet")
 
+    total = len(batch)
+    batch, held_already = drop_already_held(batch, held_by_minute(store, batch))
     written = store.insert_readings(batch)
-    print(f"    {written} new, {len(batch) - written} already present")
-    return len(batch), written, skipped
+    print(f"    {written} new, {total - written} already present")
+    return total, written, skipped
 
 
 def main():
