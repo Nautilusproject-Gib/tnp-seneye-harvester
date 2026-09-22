@@ -829,6 +829,31 @@ class TestImportEndToEnd(unittest.TestCase):
         self.assertGreater(already, 0)
         self.assertLess(agreeing, already)
 
+    def test_repeated_timestamps_collapse_to_their_median(self):
+        """Seneye's own exports log the same minute more than once."""
+        path = self.write("history.csv", (
+            "Declared,Temperature,NH3,pH\n"
+            "21/09/2026 02:11,15.375,0.001,7.94\n"
+            "21/09/2026 02:11,15.25,0.001,7.94\n"
+            "21/09/2026 02:11,15.375,0.001,8.62\n"
+            "21/09/2026 03:11,15.5,0.001,7.95\n"
+        ))
+        read, written, _ = ih.import_file(path, self.store, CONFIG, Args(sump="SA12"))
+        self.assertEqual((read, written), (2, 2))
+        rows = self.store.query("SELECT * FROM readings ORDER BY reading_time")
+        # median of 7.94, 7.94, 8.62 is 7.94, not whichever row came first
+        self.assertAlmostEqual(rows[0]["ph"], 7.94)
+        self.assertAlmostEqual(rows[0]["temperature"], 15.375)
+
+    def test_seneye_declared_column_is_recognised(self):
+        path = self.write("SB12.csv", (
+            "Declared,Temperature,NH3,pH\n"
+            "22/09/2026 14:58,14.5,0.001,7.93\n"
+        ))
+        read, written, skipped = ih.import_file(path, self.store, CONFIG, Args())
+        self.assertEqual((read, written), (1, 1))
+        self.assertEqual(skipped, {})
+
     def test_a_file_with_no_usable_header_is_skipped_quietly(self):
         path = self.write("notes.csv", "some,random,notes\na,b,c\n")
         self.assertEqual(ih.import_file(path, self.store, CONFIG, Args()),
