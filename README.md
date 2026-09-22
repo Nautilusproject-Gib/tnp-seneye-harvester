@@ -483,6 +483,30 @@ they come back wrong:
 Columns wanted: date/time, device identifier, temperature, pH and NH₃. Anything
 else in the file is ignored rather than guessed at.
 
+### What TNP's own export turned out to be
+
+The September 2026 export, checked against the live readings:
+
+- **Header** `Declared,Temperature,NH3,pH`, newest row first. `Declared` is
+  Seneye's name for the reading time and the importer now recognises it.
+- **Timestamps** `22/09/2026 14:58`, day first, no offset marked.
+- **Timezone: `Europe/London`, not `Europe/Gibraltar`.** Seneye is a UK
+  company and its export uses UK time. In September its timestamps run one
+  hour ahead of UTC, and the clocks change on the UK dates: the record repeats
+  local hour 01 on 26 October 2025, which is the BST→GMT pattern. Gibraltar
+  would have repeated hour 02. Importing these files as Gibraltar time puts
+  every reading an hour late.
+- **No device column.** Each file covers one sump and is identified by its
+  filename, so the files must be named `SA12.csv`, `SA345.csv` and so on.
+- **Repeated timestamps.** Seneye logs the same minute more than once, and the
+  repeats do not always agree — one file has 02:11 three times with pH 7.94,
+  7.94 and 8.62. The importer collapses repeats to their median rather than
+  keeping whichever row came first, so an outlier cannot win on row order.
+- **Early readings are the unit, not the water.** The record opens on 24
+  October 2025 at 28.5 °C and pH 6.7, which is a sensor on a bench rather than
+  a sump. November 2025 is missing entirely and December has nine days.
+  Coverage is steady from January 2026 at about 45 readings per sump per day.
+
 ### Loading it, without installing anything
 
 The **Import Seneye history** workflow does the whole thing in GitHub, so no

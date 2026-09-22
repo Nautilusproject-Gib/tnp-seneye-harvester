@@ -338,7 +338,7 @@
     }
   },
   "export": {
-    "window_days": 365,
+    "window_days": 1200,
     "raw_days": 30
   }
 }
