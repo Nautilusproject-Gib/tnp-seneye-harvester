@@ -151,8 +151,13 @@ def build_payload(
         for r in rows
     ]
 
+    # Latest, daily statistics and reading counts all come from the WHOLE
+    # window, not from the raw slice. Taking them from `rows` meant a year of
+    # imported history produced thirty days of daily statistics and nothing
+    # else: the dashboard's 90-day and All views had nothing to draw, and a
+    # device that had stopped reporting lost its last reading entirely.
     latest: dict[str, Any] = {}
-    for r in rows:
+    for r in all_rows:
         did = r["device_id"]
         prev = latest.get(did)
         if prev is None or r["reading_time"] > prev["t"]:
@@ -166,10 +171,10 @@ def build_payload(
                 "disconnected": r.get("disconnected"),
             }
 
-    daily = _daily_stats(rows, active)
+    daily = _daily_stats(all_rows, active)
 
     counts: dict[str, int] = defaultdict(int)
-    for r in rows:
+    for r in all_rows:
         counts[r["device_id"]] += 1
 
     sumps_cfg = config.get("sumps", {})
