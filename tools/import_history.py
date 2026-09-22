@@ -219,6 +219,60 @@ def device_for(row, columns, config, fallback_sump, filename):
     return None, "no sump or device could be identified"
 
 
+# How close two readings have to be to count as the same measurement. Exports
+# and the API sometimes round differently in the last place.
+AGREEMENT = {"temperature": 0.05, "ph": 0.02, "nh3": 0.0005, "nh4": 0.01}
+
+
+def compare_existing(store, batch) -> tuple[int, int]:
+    """(rows already in the database, rows that also agree with what is there).
+
+    Both numbers matter, and for different reasons.
+
+    The first says how much of the export the harvester has already collected.
+    Those rows are skipped rather than duplicated, so an overlap costs nothing.
+
+    The second is the timezone check, and it is the one worth reading. Counting
+    collisions alone proves nothing: readings sit on a regular half-hourly
+    grid, so an export an hour or two out still lands on timestamps that exist
+    -- it just lands on the wrong ones. Comparing the values tells the two
+    apart. Same timestamps AND same numbers means the export is being read in
+    the timezone it was written in. Same timestamps but different numbers means
+    it is being shifted onto its neighbours, and the whole year would go in
+    displaced by that much.
+    """
+    if not batch:
+        return 0, 0
+    stamps = [row["reading_time"] for row in batch]
+    try:
+        rows = store.query(
+            "SELECT * FROM readings "
+            "WHERE reading_time >= ? AND reading_time <= ?",
+            (min(stamps), max(stamps)),
+        )
+    except Exception:
+        return 0, 0
+    held = {(r["device_id"], int(r["reading_time"])): r for r in rows}
+
+    already = agreeing = 0
+    for row in batch:
+        stored = held.get((row["device_id"], row["reading_time"]))
+        if stored is None:
+            continue
+        already += 1
+        checked = matched = 0
+        for field, tolerance in AGREEMENT.items():
+            mine, theirs = row.get(field), stored.get(field)
+            if mine is None or theirs is None:
+                continue
+            checked += 1
+            if abs(float(mine) - float(theirs)) <= tolerance:
+                matched += 1
+        if checked and matched == checked:
+            agreeing += 1
+    return already, agreeing
+
+
 def _stamp_text(stamp: int, fmt: str) -> str:
     return dt.datetime.fromtimestamp(stamp, dt.timezone.utc).strftime(fmt)
 
@@ -326,6 +380,16 @@ def import_file(path, store, config, args):
             print(f"      example: {row['device_id']} "
                   f"{_stamp_text(row['reading_time'], '%Y-%m-%d %H:%M')} "
                   f"temp={row['temperature']} pH={row['ph']} NH3={row['nh3']}")
+        already, agreeing = compare_existing(store, batch)
+        if already:
+            print(f"      {already} of these are already in the database and "
+                  f"would be skipped; {agreeing} of those match the stored "
+                  "reading")
+            if agreeing < already * 0.9:
+                print("      WARNING: they land on readings the harvester "
+                      "already has but the values disagree, which is what a "
+                      "wrong --timezone looks like. Check before importing.")
+        skipped["_already"] = already
         return len(batch), 0, skipped
 
     latest_seen: dict[str, int] = {}
@@ -377,18 +441,23 @@ def main():
 
     print(f"{'Checking' if args.dry_run else 'Importing'} {len(paths)} file(s), "
           f"timestamps read as {args.timezone}")
-    total_read = total_written = 0
+    total_read = total_written = total_existing = 0
     all_skipped: dict[str, int] = {}
     for path in paths:
         read, written, skipped = import_file(path, store, config, args)
         total_read += read
         total_written += written
+        if args.dry_run:
+            total_existing += skipped.pop("_already", 0)
         for reason, count in skipped.items():
             all_skipped[reason] = all_skipped.get(reason, 0) + count
 
     print()
     if args.dry_run:
-        print(f"Would import {total_read} reading(s). Nothing was written.")
+        print(f"Would import {total_read} reading(s), of which {total_existing} "
+              "are already in the database and would be skipped. "
+              f"That leaves {total_read - total_existing} new. Nothing was "
+              "written.")
     else:
         print(f"{total_written} reading(s) added, {total_read - total_written} "
               "already in the database.")
