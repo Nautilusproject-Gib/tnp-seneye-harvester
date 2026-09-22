@@ -39,8 +39,10 @@ from harvester.store import Store  # noqa: E402
 # Heading patterns, first match wins. Ordered so the more specific ones are
 # tested before the looser ones.
 COLUMNS = [
+    # "Declared" is what Seneye's own export calls the reading time.
     ("timestamp", (r"^datetime", r"^timestamp", r"^dateandtime", r"^readingtime",
-                   r"^recordedat", r"^measuredat", r"^time$")),
+                   r"^recordedat", r"^measuredat", r"^declared", r"^logged",
+                   r"^reading$", r"^time$")),
     ("date", (r"^date",)),
     ("time_only", (r"^time",)),
     ("device_id", (r"^deviceid", r"^device$", r"^sensorid", r"^seneyeid", r"^id$",
@@ -224,6 +226,51 @@ def device_for(row, columns, config, fallback_sump, filename):
 AGREEMENT = {"temperature": 0.05, "ph": 0.02, "nh3": 0.0005, "nh4": 0.01}
 
 
+def _median(values):
+    values = sorted(v for v in values if v is not None)
+    if not values:
+        return None
+    middle = len(values) // 2
+    if len(values) % 2:
+        return values[middle]
+    return (values[middle - 1] + values[middle]) / 2.0
+
+
+def collapse_repeats(batch) -> tuple[list, int]:
+    """One reading per device per timestamp, taking the median of repeats.
+
+    Seneye's exports log the same minute more than once, and the repeats do not
+    always agree: one file has 02:11 three times with pH 7.94, 7.94 and 8.62,
+    and another has the same minute twice with 6.63 and 6.79. Keeping whichever
+    came first in the file would let an outlier win on nothing better than row
+    order, and the median of the repeats is both more defensible and stable
+    whichever way round the file is sorted.
+
+    Timestamps that appear once are untouched, which is most of them.
+    """
+    grouped: dict[tuple, list] = {}
+    order: list = []
+    for row in batch:
+        key = (row["device_id"], row["reading_time"])
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(row)
+
+    out, collapsed = [], 0
+    for key in order:
+        rows = grouped[key]
+        if len(rows) == 1:
+            out.append(rows[0])
+            continue
+        collapsed += len(rows) - 1
+        merged = dict(rows[0])
+        for field in VALUE_FIELDS:
+            merged[field] = _median([r.get(field) for r in rows])
+        out.append(merged)
+    return out, collapsed
+
+
 def compare_existing(store, batch) -> tuple[int, int]:
     """(rows already in the database, rows that also agree with what is there).
 
@@ -368,6 +415,10 @@ def import_file(path, store, config, args):
         }
         entry.update({field: values.get(field) for field in VALUE_FIELDS})
         batch.append(entry)
+
+    batch, collapsed = collapse_repeats(batch)
+    if collapsed:
+        print(f"    {collapsed} repeated timestamp(s) collapsed to their median")
 
     span = ""
     if earliest and latest:
