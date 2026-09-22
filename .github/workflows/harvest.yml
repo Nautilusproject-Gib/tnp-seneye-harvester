@@ -7,6 +7,18 @@ on:
     # missed run only costs the readings the Seneye API had at that moment.
     - cron: "*/30 * * * *"
   workflow_dispatch:
+  push:
+    # Publishing to Pages lives in this workflow's publish job, so a change to
+    # the dashboard itself used to sit in the repository until the next harvest
+    # happened to run. Editing index.html now redeploys the site.
+    #
+    # dashboard/data is excluded on purpose: the harvest job commits the JSON
+    # and CSV there, and without that exclusion each run would trigger the next
+    # one for ever.
+    paths:
+      - "dashboard/**"
+      - "!dashboard/data/**"
+      - "config.json"
 
 concurrency:
   group: harvest
