@@ -300,7 +300,7 @@ evidence of a problem.
 | Nitrate | 0–0.25 mg/L | 0–1.0 | western Mediterranean surface nitrate |
 | Nitrite | 0–0.05 mg/L | 0–0.2 | upper-ocean nitrite |
 | Ammonia | 0–0.05 mg/L | 0–0.2 | surface ammonium, a few µmol/L at most |
-| Phosphate | 0–0.05 ppm | 0–0.3 | western Mediterranean surface phosphate |
+| Phosphate | 0–50 ppb | 0–300 | western Mediterranean surface phosphate |
 | Calcium | 400–455 ppm | 360–520 | 412 ppm at S=35, scaled with salinity |
 | Magnesium | 1250–1420 ppm | 1150–1600 | 1290 ppm at S=35, scaled with salinity |
 
@@ -310,12 +310,17 @@ evidence of a problem.
   7.5 °dKH. The 2500–2650 µmol/kg range gives 7.2–7.6 °dKH.
 - Nutrients from µmol/L to mg/L as the ion: NO₃ × 62, NO₂ × 46, PO₄ × 95,
   NH₄ × 18, all ÷ 1000. So 4 µmol/L nitrate = 0.25 mg/L, and 0.16 µmol/L
-  phosphate = 0.015 mg/L.
+  phosphate = 0.015 mg/L, which is 15 ppb.
 - Major ions scale with salinity: Ca 412 and Mg 1290 at S=35 become ~452 and
   ~1415 at S=38.4.
-- Phosphate, calcium and magnesium are read in ppm. In seawater 1 ppm is about
-  1.03 mg/L, because a litre weighs roughly 1.026 kg, so the same figures serve
-  for both units and the harvester converts nothing.
+- Calcium and magnesium are read in ppm. In seawater 1 ppm is about 1.03 mg/L,
+  because a litre weighs roughly 1.026 kg, so the same figures serve for both
+  units and the harvester converts nothing.
+- Phosphate is read in **parts per billion**, a thousandth of the others. TNP's
+  readings run 4 to 10 ppb, which is ordinary Strait surface water; the same
+  figures in ppm would be a hundred times anything seawater does. The band was
+  originally set in ppm and has been multiplied by a thousand, so it describes
+  the same concentrations as before.
 
 **Sources**
 
