@@ -78,7 +78,10 @@ ANALYTES = [
     ("no3", "Nitrate (NO\u2083\u207b)", "mg/L", 2, "chemical"),
     ("no2", "Nitrite (NO\u2082\u207b)", "mg/L", 3, "chemical"),
     ("nh3", "Ammonia (NH\u2083)", "mg/L", 3, "chemical"),
-    ("po4", "Phosphate (PO\u2084\u00b3\u207b)", "ppm", 2, "chemical"),
+    # Read in parts per billion, not ppm: at 4 to 10 ppb the readings are
+    # ordinary Strait surface water, whereas the same figures in ppm would be
+    # two orders of magnitude above anything seawater does.
+    ("po4", "Phosphate (PO\u2084\u00b3\u207b)", "ppb", 1, "chemical"),
     ("ca", "Calcium (Ca\u00b2\u207a)", "ppm", 0, "chemical"),
     ("mg", "Magnesium (Mg\u00b2\u207a)", "ppm", 0, "chemical"),
 ]
