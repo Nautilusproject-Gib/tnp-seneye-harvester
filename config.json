@@ -206,7 +206,7 @@
     "nh3_as_nitrogen": false
   },
   "insitu_reference": {
-    "_comment": "Reference ranges for colouring the in-situ sample table. typical = ordinary local seawater (green). Between typical and outer is amber, meaning off typical but not alarming. Beyond outer is red. Derived from published seawater values for the western Mediterranean and Strait of Gibraltar and converted into the units this sheet uses; the workings and sources are in the README. These describe SEAWATER, not what Posidonia requires, and a red cell is a prompt to check the reading and the kit, not evidence of a problem. Phosphate, calcium and magnesium are read in ppm; in seawater 1 ppm is ~1.03 mg/L, so the same numbers serve for both and nothing is converted.",
+    "_comment": "Reference ranges for colouring the in-situ sample table. typical = ordinary local seawater (green). Between typical and outer is amber, meaning off typical but not alarming. Beyond outer is red. Derived from published seawater values for the western Mediterranean and Strait of Gibraltar and converted into the units this sheet uses; the workings and sources are in the README. These describe SEAWATER, not what Posidonia requires, and a red cell is a prompt to check the reading and the kit, not evidence of a problem. Calcium and magnesium are read in ppm and phosphate in ppb; in seawater 1 ppm is ~1.03 mg/L, so for calcium and magnesium the same numbers serve for both units and nothing is converted.",
     "temp_c": {
       "typical": [
         13.0,
@@ -287,13 +287,13 @@
     "po4": {
       "typical": [
         0.0,
-        0.05
+        50.0
       ],
       "outer": [
         0.0,
-        0.3
+        300.0
       ],
-      "basis": "western Mediterranean surface phosphate ~0.16 umol/kg = 0.015 ppm as PO4"
+      "basis": "western Mediterranean surface phosphate ~0.16 umol/kg = 15 ppb as PO4; the sheet records ppb, so 0.05 ppm becomes 50 ppb"
     },
     "ca": {
       "typical": [
