@@ -1,4 +1,4 @@
-,Date,Time,Tank ID,Temp (°C),Salinity (ppt),pH,dKH (°dKH),NO₃ (mg/L),NO₂ (mg/L),NH₃,PO₄³⁻ ,Ca2+ (mg/L),Mg2+ (mg/L),,,,,,,Observer ,Notes
+,Date,Time,Tank ID,Temp (°C),Salinity (ppt),pH,dKH (°dKH),NO₃ (mg/L),NO₂ (mg/L),NH₃,PO₄³⁻ (ppb),Ca2+ (mg/L),Mg2+ (mg/L),,,,,,,Observer ,Notes
 ,13/8/26,12:38,SA12,14.1,36.18,7.4,15,0,0,,,400,,,,,,,,Jules,
 ,13/8/26,12:38,SA345,15.6,36.93,7.4,10,0,0,,,400,,,,,,,,,
 ,13/8/26,12:38,SB12,16.5,35.73,N/A,N/A,N/A,N/A,,,N/A,,,,,,,,,
