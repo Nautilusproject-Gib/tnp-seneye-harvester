@@ -1,0 +1,65 @@
+name: Probe smart plugs
+
+# Asks the Tuya cloud what each plug and the air sensor currently report, and
+# prints it in the run log. Reads only: nothing is written to the database and
+# nothing is switched.
+#
+# Use it to work out which switch code drives which physical socket:
+#
+#   1. Actions -> Probe smart plugs -> Run workflow. Note both switch values
+#      for the plug you are checking.
+#   2. In the Smart Life app, switch off the socket feeding the lower-numbered
+#      sump on that row, for a few seconds only.
+#   3. Run this again. Whichever code went to False is that sump's socket.
+#   4. Switch it back on, and correct config.json > plugs > devices if the
+#      mapping there has the two the wrong way round.
+#
+# Tick "show the toggle test" to print those instructions in the log instead of
+# calling Tuya at all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_id:
+        description: "One device ID, or leave blank for every configured device"
+        required: false
+        default: ""
+      region:
+        description: "Data centre the Tuya cloud project was created in"
+        required: true
+        default: "eu"
+        type: choice
+        options:
+          - eu
+          - weu
+          - us
+          - eus
+          - in
+      toggle_test:
+        description: "Show the toggle test instructions instead of calling Tuya"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Probe
+        env:
+          TUYA_ACCESS_ID: ${{ secrets.TUYA_ACCESS_ID }}
+          TUYA_ACCESS_SECRET: ${{ secrets.TUYA_ACCESS_SECRET }}
+        run: |
+          python tools/probe_plugs.py \
+            --region "${{ inputs.region }}" \
+            ${{ inputs.toggle_test && '--toggle-test' || '' }} \
+            ${{ inputs.device_id }}
