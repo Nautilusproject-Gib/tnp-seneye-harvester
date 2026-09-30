@@ -179,7 +179,7 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .ov-table{border-collapse:collapse;width:100%;font-size:14px;min-width:720px}
 .ov-table th,.ov-table td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--grid);white-space:nowrap}
 .ov-table thead th{
-  font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  font-size:12.5px;letter-spacing:.01em;text-transform:none;color:var(--muted);
   background:var(--surface-2);font-weight:700;vertical-align:bottom;
 }
 .ov-table thead th .lim{display:block;font-size:11px;letter-spacing:0;text-transform:none;font-weight:400;color:var(--muted)}
@@ -192,6 +192,17 @@ h1{font-size:21px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em
 .ov-table td.tanks{color:var(--muted);font-size:13px}
 .ov-table tbody tr.row:hover td{background:#F7FBFC}
 .ov-table tbody tr.row{cursor:pointer}
+.ov-table td.pick{cursor:pointer}
+.ov-table td.pick:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+/* A cell keeps its own status colour on hover: the point of the wash is that
+   an out-of-band number stays visible while the pointer is over it. */
+.ov-table tbody tr.row:hover td.st-out-band{background:var(--warn-bg)}
+.ov-table tbody tr.row:hover td.st-critical{background:var(--crit-bg)}
+.ov-table tbody tr.row:hover td.st-offline{background:var(--off-bg)}
+.ov-table tbody tr.row:hover td.plug-on,
+.ov-table tbody tr.row:hover td.plug-off{background:var(--good-bg)}
+.ov-table tbody tr.row:hover td.plug-concern{background:var(--warn-bg)}
+.ov-table tbody tr.row:hover td.plug-stale{background:var(--crit-bg)}
 .ov-cell{display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;width:100%}
 .ov-cell .mk{font-size:11px;flex:none}
 td.st-in-band{color:var(--good)}
@@ -220,10 +231,15 @@ td.st-offline{background:var(--off-bg);color:var(--muted)}
 td.plug{font-variant-numeric:tabular-nums}
 td.plug .ov-cell{gap:7px}
 td.plug .since{font-size:12px;color:var(--muted);font-weight:400}
-td.plug-on{color:var(--good)}
-td.plug-off{color:var(--ink-2)}
+/* Green means the plug is answering, red means it is not, whatever the
+   switch happens to say. Amber is kept for the one case worth separating:
+   a plug that is answering and reporting something wrong, which would
+   otherwise be hidden inside the green. */
+td.plug-on{background:var(--good-bg);color:var(--good);font-weight:700}
+td.plug-off{background:var(--good-bg);color:var(--good)}
 td.plug-concern{background:var(--warn-bg);color:var(--warning);font-weight:700}
-td.plug-stale{background:var(--off-bg);color:var(--muted)}
+td.plug-stale{background:var(--crit-bg);color:var(--critical);font-weight:700}
+td.plug-stale .since{color:var(--critical)}
 
 /* alert strip */
 .alerts{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px}
@@ -427,9 +443,13 @@ details.table-block[open] > summary::after{content:"\2212"}
 table{border-collapse:collapse;width:100%;font-size:12.5px}
 th,td{padding:7px 12px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--grid)}
 th:first-child,td:first-child{text-align:left}
+/* No uppercase transform on column headings. pH is a defined quantity with a
+   fixed spelling, and "PH" is not it; the same goes for NH3 and NH4+ in the
+   readings tables. Headings carry their own capitalisation instead. */
 thead th{
-  position:sticky;top:0;background:var(--surface-2);color:var(--muted);font-weight:500;
-  font-variant-numeric:tabular-nums;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  position:sticky;top:0;background:var(--surface-2);color:var(--muted);font-weight:700;
+  font-variant-numeric:tabular-nums;font-size:11.5px;letter-spacing:.01em;
+  text-transform:none;
 }
 tbody td{font-variant-numeric:tabular-nums;font-variant-numeric:tabular-nums}
 tbody td:first-child{font-family:Lato,"Helvetica Neue",Helvetica,Arial,sans-serif}
@@ -1231,6 +1251,26 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
     box.hidden = shown === 0;
   }
 
+  // Opens the detail chart for one sump, optionally switching to a named
+  // parameter first. Stops the click reaching the row, which would open the
+  // same sump on whatever parameter was already showing.
+  function openOn(node, deviceId, paramKey) {
+    function go(e) {
+      if (e) e.stopPropagation();
+      // The overview sits above the tabs, so a click on it can arrive while
+      // the in-situ samples tab is showing and the sensor charts are hidden.
+      state.view = "sensor";
+      state.device = deviceId;
+      if (paramKey) state.param = paramKey;
+      renderAll();
+      el("detail").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    node.addEventListener("click", go);
+    node.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(e); }
+    });
+  }
+
   function renderOverview() {
     var host = el("overview");
     var devices = (state.data.devices || []).slice();
@@ -1351,7 +1391,16 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
         wrap.appendChild(document.createTextNode(
           v === null || v === undefined ? "\u2013" : fmt(v, def.precision)));
         td.appendChild(wrap);
-        td.title = (d.sump || d.device_id) + " " + def.label + ": " + st.label;
+        td.title = (d.sump || d.device_id) + " " + def.label + ": " + st.label +
+          ". Click for the " + shortLabel(def) + " chart for this sump.";
+        // Clicking a cell used to open whichever parameter was already
+        // selected below, so reading across a row and clicking pH gave you
+        // temperature. A cell now opens its own parameter for its own sump,
+        // which is what clicking a number in a table ought to do.
+        td.className += " pick";
+        td.tabIndex = 0;
+        td.setAttribute("role", "button");
+        openOn(td, d.device_id, def.key);
         tr.appendChild(td);
 
         if (!def.modelled && STATUS_RANK[st.kind] > STATUS_RANK[worst]) worst = st.kind;
@@ -1365,7 +1414,16 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
 
       var plug = showPlugs ? plugStateFor(d) : null;
       if (plug) plugsMapped++;
-      if (showPlugs) tr.appendChild(plugCell(d));
+      if (showPlugs) {
+        var tdPlug = plugCell(d);
+        // A chiller explains the temperature trace and nothing else, so that
+        // is where its cell goes.
+        tdPlug.className += " pick";
+        tdPlug.tabIndex = 0;
+        tdPlug.setAttribute("role", "button");
+        openOn(tdPlug, d.device_id, "temperature");
+        tr.appendChild(tdPlug);
+      }
 
       var slide = slideFor(d.device_id);
       var tdSlide = document.createElement("td");
@@ -1427,6 +1485,7 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
       }
 
       function open() {
+        state.view = "sensor";
         state.device = d.device_id;
         renderAll();
         el("detail").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1511,11 +1570,16 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
     });
 
     if (plugsEnabled()) {
-      [["●", "chiller running"], ["○", "chiller off"],
-       ["△", "off while the sump is too warm"],
-       ["·", "plug not reporting"]].forEach(function (k) {
+      [["●", "var(--good-bg)", "plug online, chiller running"],
+       ["○", "var(--good-bg)", "plug online, chiller not running"],
+       ["△", "var(--warn-bg)", "online, but something is wrong"],
+       ["·", "var(--crit-bg)", "plug offline, state cannot be confirmed"]]
+      .forEach(function (k) {
         var span = document.createElement("span");
-        span.appendChild(document.createTextNode(k[0] + "  " + k[1]));
+        var i = document.createElement("i");
+        i.style.background = k[1];
+        span.appendChild(i);
+        span.appendChild(document.createTextNode(k[0] + "  " + k[2]));
         box.appendChild(span);
       });
       var note = document.createElement("span");
