@@ -12,6 +12,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harvester.export import _daily_stats, _slides, build_payload
+from harvester import plugs
 from harvester.seneye import parse_reading
 from harvester.store import Store
 
@@ -859,6 +860,314 @@ class TestImportEndToEnd(unittest.TestCase):
         self.assertEqual(ih.import_file(path, self.store, CONFIG, Args()),
                          (0, 0, {}))
 
+
+
+# ---------------------------------------------------------------------------
+# Smart plugs and the nursery air sensor
+# ---------------------------------------------------------------------------
+
+PLUG_CONFIG = {
+    "plugs": {
+        "enabled": True,
+        "region": "eu",
+        "stale_minutes": 90,
+        "reference": {"air_temperature": {"band": [12, 28]}},
+        "devices": {
+            "_comment": "ignored",
+            "plugD": {
+                "label": "Row D chillers",
+                "kind": "switch",
+                "role": "chiller",
+                "sockets": {
+                    "_comment": "ignored",
+                    "switch_1": {"sump": "SD12", "role": "chiller"},
+                    "switch_2": {"sump": "SD345", "role": "chiller"},
+                },
+            },
+            "plugE": {
+                "label": "Row E chillers",
+                "kind": "switch",
+                "role": "chiller",
+                "sockets": {"switch_1": {"sump": "SE12", "role": "chiller"}},
+            },
+            "airSensor": {
+                "label": "Nursery air",
+                "kind": "ambient",
+                "location": "inside the nursery",
+                "scales": {"air_temperature": 10, "humidity": 1},
+            },
+        },
+    }
+}
+
+
+class FakeTuya:
+    """Stands in for the cloud so the tests never touch the network."""
+
+    def __init__(self, codes, online=True, update_time=None):
+        self.codes = codes
+        self.online = online
+        self.update_time = update_time
+
+    def status(self, ids):
+        return {i: dict(self.codes.get(i, {})) for i in ids if i in self.codes}
+
+    def info(self, ids):
+        return {
+            i: {"name": i, "online": 1 if self.online else 0,
+                "product_name": "plug", "update_time": self.update_time}
+            for i in ids
+        }
+
+
+def plug_codes(d1=True, d2=False, e1=True, temp=213, hum=57):
+    return {
+        "plugD": {"switch_1": d1, "switch_2": d2, "cur_power": 1124},
+        "plugE": {"switch_1": e1},
+        "airSensor": {"va_temperature": temp, "va_humidity": hum,
+                      "battery_percentage": 88},
+    }
+
+
+class TestPlugPolling(unittest.TestCase):
+    def test_every_configured_socket_is_reported_with_its_sump(self):
+        result = plugs.poll(FakeTuya(plug_codes()), PLUG_CONFIG, now=1000)
+        by_sump = {s.sump_code: s for s in result.sockets}
+        self.assertEqual(set(by_sump), {"SD12", "SD345", "SE12"})
+        self.assertEqual(by_sump["SD12"].on_state, 1)
+        self.assertEqual(by_sump["SD345"].on_state, 0)
+        self.assertEqual(by_sump["SD12"].role, "chiller")
+
+    def test_the_comment_keys_in_config_are_not_treated_as_devices(self):
+        result = plugs.poll(FakeTuya(plug_codes()), PLUG_CONFIG, now=1000)
+        self.assertNotIn("_comment", {s.device_id for s in result.sockets})
+        self.assertNotIn("_comment", {s.socket for s in result.sockets})
+
+    def test_ambient_values_are_divided_by_the_configured_scale(self):
+        result = plugs.poll(FakeTuya(plug_codes(temp=213, hum=57)), PLUG_CONFIG, now=1000)
+        self.assertEqual(len(result.ambient), 1)
+        reading = result.ambient[0]
+        self.assertAlmostEqual(reading.air_temperature, 21.3)
+        self.assertAlmostEqual(reading.humidity, 57.0)
+
+    def test_a_shared_meter_is_not_attributed_to_either_socket(self):
+        # One power figure cannot be split between two chillers, so claiming it
+        # for both would double the nursery's apparent draw.
+        result = plugs.poll(FakeTuya(plug_codes()), PLUG_CONFIG, now=1000)
+        doubles = [s for s in result.sockets if s.device_id == "plugD"]
+        self.assertTrue(all(s.power_w is None for s in doubles))
+
+    def test_a_device_that_answers_nothing_is_listed_as_offline(self):
+        codes = plug_codes()
+        codes.pop("plugE")
+        result = plugs.poll(FakeTuya(codes, online=False), PLUG_CONFIG, now=1000)
+        self.assertIn("plugE", result.offline)
+
+    def test_the_devices_own_timestamp_is_preferred_over_the_clock(self):
+        result = plugs.poll(FakeTuya(plug_codes(), update_time=900), PLUG_CONFIG, now=1000)
+        self.assertTrue(all(s.reading_time == 900 for s in result.sockets))
+
+    def test_an_absurd_device_timestamp_falls_back_to_the_clock(self):
+        # A sensor reporting a date in 2038 should not make the dashboard say
+        # its reading is fresh for the next twelve years.
+        result = plugs.poll(FakeTuya(plug_codes(), update_time=2 ** 31),
+                            PLUG_CONFIG, now=1000)
+        self.assertTrue(all(s.reading_time == 1000 for s in result.sockets))
+
+    def test_nothing_is_polled_when_no_devices_are_configured(self):
+        result = plugs.poll(FakeTuya({}), {"plugs": {"enabled": True}}, now=1000)
+        self.assertEqual(result.sockets, [])
+        self.assertEqual(result.ambient, [])
+
+    def test_describe_lists_the_switch_codes_to_map(self):
+        text = plugs.describe(FakeTuya(plug_codes()), ["plugD"])
+        self.assertIn("switch_1", text)
+        self.assertIn("switch_2", text)
+        self.assertIn("sockets", text)
+
+
+class TestPlugSigning(unittest.TestCase):
+    def setUp(self):
+        self.client = plugs.TuyaClient("id123", "secret456", region="eu")
+
+    def test_missing_credentials_are_refused_before_any_request(self):
+        with self.assertRaises(plugs.TuyaError):
+            plugs.TuyaClient("", "")
+
+    def test_query_parameters_are_sorted_for_the_signature(self):
+        self.assertEqual(
+            self.client._canonical("GET", "/v1.0/x", {"b": "2", "a": "1"}),
+            "/v1.0/x?a=1&b=2",
+        )
+
+    def test_the_signature_is_uppercase_hex_and_depends_on_the_token(self):
+        without = self.client._sign("GET", "/v1.0/token?grant_type=1", "", None)
+        self.assertRegex(without["sign"], r"^[0-9A-F]{64}$")
+        self.assertNotIn("access_token", without)
+        with_token = self.client._sign("GET", "/v1.0/devices", "", "tok")
+        self.assertEqual(with_token["access_token"], "tok")
+        self.assertNotEqual(without["sign"], with_token["sign"])
+
+    def test_the_region_name_picks_the_data_centre(self):
+        self.assertEqual(plugs.TuyaClient("a", "b", "eu").base,
+                         "https://openapi.tuyaeu.com")
+        self.assertEqual(plugs.TuyaClient("a", "b", "us").base,
+                         "https://openapi.tuyaus.com")
+        # An unknown region falls back to Central Europe rather than crashing a
+        # scheduled harvest over a typo in config.json.
+        self.assertEqual(plugs.TuyaClient("a", "b", "nowhere").base,
+                         "https://openapi.tuyaeu.com")
+
+
+class TestPlugStorage(unittest.TestCase):
+    def setUp(self):
+        self.store = Store("sqlite:///:memory:")
+        self.store.migrate()
+
+    def poll_into(self, codes, when):
+        result = plugs.poll(FakeTuya(codes, update_time=when), PLUG_CONFIG, now=when)
+        return (self.store.insert_plug_states(s.as_row() for s in result.sockets),
+                self.store.insert_ambient(a.as_row() for a in result.ambient))
+
+    def test_only_changes_are_recorded(self):
+        first, _ = self.poll_into(plug_codes(), 1000)
+        self.assertEqual(first, 3)
+        again, _ = self.poll_into(plug_codes(), 2800)
+        self.assertEqual(again, 0)
+        rows = self.store.query("SELECT * FROM plug_states")
+        self.assertEqual(len(rows), 3)
+
+    def test_a_switch_writes_one_new_row_and_keeps_the_old_one(self):
+        self.poll_into(plug_codes(d2=False), 1000)
+        changed, _ = self.poll_into(plug_codes(d2=True), 2800)
+        self.assertEqual(changed, 1)
+        rows = self.store.query(
+            "SELECT * FROM plug_states WHERE socket = 'switch_2' ORDER BY changed_at"
+        )
+        self.assertEqual([r["on_state"] for r in rows], [0, 1])
+        self.assertEqual(rows[1]["changed_at"], 2800)
+
+    def test_last_seen_advances_while_the_state_holds(self):
+        self.poll_into(plug_codes(), 1000)
+        self.poll_into(plug_codes(), 5000)
+        row = self.store.query(
+            "SELECT * FROM plug_states WHERE socket = 'switch_1' AND device_id = 'plugE'"
+        )[0]
+        self.assertEqual(row["changed_at"], 1000)
+        self.assertEqual(row["last_seen"], 5000)
+
+    def test_a_change_reported_with_a_stale_timestamp_still_sorts_forward(self):
+        self.poll_into(plug_codes(d2=False), 5000)
+        self.poll_into(plug_codes(d2=True), 4000)
+        rows = self.store.query(
+            "SELECT * FROM plug_states WHERE socket = 'switch_2' ORDER BY changed_at"
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertGreater(rows[1]["changed_at"], rows[0]["changed_at"])
+
+    def test_ambient_readings_are_not_duplicated(self):
+        self.poll_into(plug_codes(), 1000)
+        _, second = self.poll_into(plug_codes(), 1000)
+        self.assertEqual(second, 0)
+
+    def test_an_ambient_row_with_no_values_is_not_stored(self):
+        codes = plug_codes()
+        codes["airSensor"] = {"battery_percentage": 90}
+        _, written = self.poll_into(codes, 1000)
+        self.assertEqual(written, 0)
+
+
+class TestPlugExport(unittest.TestCase):
+    def setUp(self):
+        self.store = Store("sqlite:///:memory:")
+        self.store.migrate()
+        self.now = int(time.time())
+        config = dict(PLUG_CONFIG)
+        for offset, codes in ((-7200, plug_codes(d2=False)), (-3600, plug_codes(d2=True))):
+            when = self.now + offset
+            result = plugs.poll(FakeTuya(codes, update_time=when), config, now=when)
+            self.store.insert_plug_states(s.as_row() for s in result.sockets)
+            self.store.insert_ambient(a.as_row() for a in result.ambient)
+
+    def payload(self):
+        return build_payload(self.store, PLUG_CONFIG, window_days=30, raw_days=30)
+
+    def test_each_sump_gets_its_current_socket_state(self):
+        by_sump = self.payload()["plugs"]["by_sump"]
+        self.assertEqual(by_sump["SD12"][0]["on"], 1)
+        self.assertEqual(by_sump["SD345"][0]["on"], 1)
+
+    def test_since_is_the_moment_the_state_changed_not_the_last_poll(self):
+        entry = self.payload()["plugs"]["by_sump"]["SD345"][0]
+        self.assertEqual(entry["since"], self.now - 3600)
+
+    def test_a_plug_not_heard_from_recently_is_marked_stale(self):
+        store = Store("sqlite:///:memory:")
+        store.migrate()
+        old = self.now - 6 * 3600
+        result = plugs.poll(FakeTuya(plug_codes(), update_time=old), PLUG_CONFIG, now=old)
+        store.insert_plug_states(s.as_row() for s in result.sockets)
+        entry = build_payload(store, PLUG_CONFIG, 30, 30)["plugs"]["by_sump"]["SD12"][0]
+        self.assertTrue(entry["stale"])
+
+    def test_the_transition_log_is_exported_for_the_recent_window(self):
+        history = self.payload()["plugs"]["history"]
+        switches = [h for h in history if h["socket"] == "switch_2"]
+        self.assertEqual([h["on"] for h in switches], [0, 1])
+
+    def test_ambient_is_exported_with_its_reference_band(self):
+        ambient = self.payload()["ambient"]
+        self.assertTrue(ambient["enabled"])
+        keys = [p["key"] for p in ambient["parameters"]]
+        self.assertIn("air_temperature", keys)
+        band = [p["band"] for p in ambient["parameters"] if p["key"] == "air_temperature"][0]
+        self.assertEqual(band, [12, 28])
+
+    def test_air_readings_never_join_the_water_parameters(self):
+        # The air sensor measures the room, not a sump. Letting it into the
+        # parameter list would put a tenth row in the overview table that no
+        # amount of chiller would ever bring into band.
+        payload = self.payload()
+        self.assertNotIn("air_temperature", [p["key"] for p in payload["parameters"]])
+        self.assertNotIn("airSensor", [d["device_id"] for d in payload["devices"]])
+
+    def test_the_subscription_expiry_travels_with_the_payload(self):
+        config = json.loads(json.dumps(PLUG_CONFIG))
+        config["plugs"]["subscription_expires"] = "2026-10-31"
+        payload = build_payload(self.store, config, 30, 30)
+        self.assertIsNotNone(payload["plugs"]["subscription_expires"])
+        self.assertEqual(payload["plugs"]["subscription_warn_days"], 14)
+
+    def test_subscription_days_counts_down_and_goes_negative(self):
+        import datetime
+        at = datetime.datetime(2026, 10, 1, tzinfo=datetime.timezone.utc).timestamp()
+        self.assertEqual(
+            plugs.subscription_days({"subscription_expires": "2026-10-31"}, at), 30)
+        self.assertLess(
+            plugs.subscription_days({"subscription_expires": "2026-09-01"}, at), 0)
+        self.assertIsNone(plugs.subscription_days({}, at))
+        self.assertIsNone(
+            plugs.subscription_days({"subscription_expires": "not a date"}, at))
+
+    def test_plugs_disabled_exports_nothing_but_the_flag(self):
+        payload = build_payload(self.store, {"plugs": {"enabled": False}}, 30, 30)
+        self.assertEqual(payload["plugs"], {"enabled": False})
+        self.assertFalse(payload["ambient"]["enabled"])
+
+    def test_an_export_against_a_database_without_the_tables_still_builds(self):
+        bare = Store("sqlite:///:memory:")
+        with bare.cursor() as cur:
+            cur.execute("CREATE TABLE devices (device_id TEXT PRIMARY KEY, "
+                        "description TEXT, device_type INTEGER, sump_code TEXT, "
+                        "system_code TEXT, label TEXT, first_seen INTEGER, "
+                        "last_seen INTEGER)")
+            cur.execute("CREATE TABLE readings (device_id TEXT, reading_time INTEGER)")
+            cur.execute("CREATE TABLE harvest_runs (run_id INTEGER PRIMARY KEY, "
+                        "started_at INTEGER, finished_at INTEGER, status TEXT, "
+                        "devices_polled INTEGER, readings_inserted INTEGER, message TEXT)")
+        payload = build_payload(bare, PLUG_CONFIG, 30, 30)
+        self.assertEqual(payload["plugs"]["by_sump"], {})
+        self.assertFalse(payload["ambient"]["enabled"])
 
 
 if __name__ == "__main__":
