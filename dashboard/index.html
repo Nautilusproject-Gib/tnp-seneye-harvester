@@ -204,6 +204,27 @@ td.st-offline{background:var(--off-bg);color:var(--muted)}
 .ov-key i{width:13px;height:13px;border:1px solid var(--rule);display:inline-block;flex:none}
 @media (max-width:560px){ .ov-head h2{font-size:19px} }
 
+/* nursery air, and the chiller plugs. Read only: the page shows what the
+   plugs report and never switches them. */
+.ov-air{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.ov-air[hidden]{display:none}
+.air-chip{
+  display:flex;align-items:baseline;gap:8px;padding:8px 13px;
+  border:1px solid var(--rule);background:var(--surface);font-size:13.5px;color:var(--ink-2);
+}
+.air-chip b{font-size:17px;font-weight:700;color:var(--blue);font-variant-numeric:tabular-nums}
+.air-chip .k{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.air-chip.out b{color:var(--warning)}
+.air-chip.off b{color:var(--muted)}
+.air-chip .when{font-size:12px;color:var(--muted)}
+td.plug{font-variant-numeric:tabular-nums}
+td.plug .ov-cell{gap:7px}
+td.plug .since{font-size:12px;color:var(--muted);font-weight:400}
+td.plug-on{color:var(--good)}
+td.plug-off{color:var(--ink-2)}
+td.plug-concern{background:var(--warn-bg);color:var(--warning);font-weight:700}
+td.plug-stale{background:var(--off-bg);color:var(--muted)}
+
 /* alert strip */
 .alerts{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px}
 .alert{
@@ -455,6 +476,7 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
          Details for any one sump are further down the page.</p>
     </div>
     <div class="ov-banner" id="ov-banner"></div>
+    <div class="ov-air" id="ov-air" hidden></div>
     <div class="ov-wrap"><table class="ov-table" id="ov-table"></table></div>
     <div class="ov-key" id="ov-key"></div>
   </section>
@@ -976,6 +998,208 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
     return def.band[0] + "\u2013" + def.band[1] + (def.unit ? " " + def.unit : "");
   }
 
+  // ---- chiller plugs ---------------------------------------------------
+  //
+  // Read only, on purpose. This page is a static file on a public website: it
+  // can hold no credential, so it has no way to switch anything, and a button
+  // on it would be a button any visitor could press. Switching stays in the
+  // phone app. What the page can do is tell you which chiller is on and since
+  // when, which is the half of the story the temperature trace leaves out.
+
+  function plugsEnabled() {
+    var p = state.data.plugs || {};
+    return !!p.enabled && !!(p.sockets && p.sockets.length);
+  }
+
+  function plugsFor(sump) {
+    if (!sump) return [];
+    return ((state.data.plugs || {}).by_sump || {})[sump] || [];
+  }
+
+  // A chiller being off is not in itself a fault: they cycle. It is a fault
+  // when the water is above its working range and the chiller is off anyway,
+  // or when the plug has stopped answering and we no longer know either way.
+  function plugStateFor(device) {
+    var list = plugsFor(device.sump);
+    if (!list.length) return null;
+    var p = list[0];
+    var tempStatus = statusOf(device.device_id, "temperature");
+    var hot = tempStatus.kind === "critical" ||
+      (tempStatus.kind === "out-band" && tempAboveBand(device.device_id));
+    var kind, words;
+    if (p.stale || p.online === 0) {
+      kind = "stale";
+      words = "the plug has stopped reporting, so its state is unknown";
+    } else if (p.on === 1) {
+      kind = "on";
+      words = "running";
+    } else if (p.on === 0 && hot) {
+      kind = "concern";
+      words = "off while the sump is above its working range";
+    } else if (p.on === 0) {
+      kind = "off";
+      words = "off";
+    } else {
+      kind = "stale";
+      words = "no state reported";
+    }
+    return {
+      plug: p, kind: kind, words: words,
+      since: p.since || null,
+      label: p.label || ((p.role || "plug") + (p.socket ? " (" + p.socket + ")" : ""))
+    };
+  }
+
+  function tempAboveBand(deviceId) {
+    var latest = latestFor(deviceId);
+    var def = paramDef("temperature");
+    if (!latest || !def.band) return false;
+    var v = latest.values.temperature;
+    return v !== null && v !== undefined && v > def.band[1];
+  }
+
+  function plugCell(device) {
+    var st = plugStateFor(device);
+    var td = document.createElement("td");
+    td.className = "n plug";
+    var wrap = document.createElement("span");
+    wrap.className = "ov-cell";
+
+    if (!st) {
+      td.appendChild(document.createTextNode("\u2013"));
+      td.title = (device.sump || device.device_id) + " has no plug mapped to it";
+      return td;
+    }
+
+    td.className += " plug-" + st.kind;
+    var mk = document.createElement("span");
+    mk.className = "mk";
+    mk.setAttribute("aria-hidden", "true");
+    mk.textContent = st.kind === "on" ? "\u25cf"
+      : st.kind === "concern" ? "\u25b3"
+      : st.kind === "stale" ? "\u00b7" : "\u25cb";
+    wrap.appendChild(mk);
+    wrap.appendChild(document.createTextNode(
+      st.kind === "stale" ? "?" : st.plug.on === 1 ? "on" : "off"));
+
+    // "off since 14:05" is the sentence worth reading. A change older than a
+    // day gets the date too, or "since 09:40" would quietly mean last Tuesday.
+    if (st.since && st.kind !== "stale") {
+      var since = document.createElement("span");
+      since.className = "since";
+      var age = today() - st.since;
+      since.textContent = age > DAY ? fmtTime(st.since, true) : fmtTime(st.since);
+      wrap.appendChild(since);
+    }
+    td.appendChild(wrap);
+
+    var bits = [(device.sump || device.device_id) + " " + (st.plug.role || "plug") +
+                ": " + st.words];
+    if (st.since) bits.push("since " + fmtTime(st.since, true));
+    if (st.plug.power_w !== null && st.plug.power_w !== undefined) {
+      bits.push("drawing " + fmt(st.plug.power_w, 1) + " W");
+    }
+    if (st.plug.last_seen) bits.push("plug last heard from " + fmtTime(st.plug.last_seen, true));
+    bits.push("switched from the Smart Life app, not from this page");
+    td.title = bits.join("; ");
+    return td;
+  }
+
+  // ---- nursery air -----------------------------------------------------
+
+  function renderAir() {
+    var box = el("ov-air");
+    box.textContent = "";
+    var amb = state.data.ambient || {};
+    if (!amb.enabled || !amb.parameters || !amb.parameters.length) {
+      box.hidden = true;
+      return;
+    }
+    var devices = amb.devices || [];
+    var shown = 0;
+
+    devices.forEach(function (dev) {
+      var latest = (amb.latest || {})[dev.device_id];
+      if (!latest) return;
+      amb.parameters.forEach(function (def) {
+        var v = latest.values[def.key];
+        if (v === null || v === undefined) return;
+        var out = def.band && (v < def.band[0] || v > def.band[1]);
+        var stale = (today() - latest.t) > ((state.data.plugs || {}).stale_after || 5400);
+        var chip = document.createElement("div");
+        chip.className = "air-chip" + (stale ? " off" : out ? " out" : "");
+        var k = document.createElement("span");
+        k.className = "k";
+        k.textContent = def.label;
+        chip.appendChild(k);
+        var b = document.createElement("b");
+        b.textContent = fmt(v, def.precision) + (def.unit ? " " + def.unit : "");
+        chip.appendChild(b);
+        var when = document.createElement("span");
+        when.className = "when";
+        when.textContent = stale ? "last seen " + fmtTime(latest.t, true)
+                                 : fmtTime(latest.t);
+        chip.appendChild(when);
+        chip.title = (dev.label || "Nursery air") +
+          (dev.location ? ", " + dev.location : "") + ": " + def.label + " " +
+          fmt(v, def.precision) + (def.unit ? " " + def.unit : "") +
+          " at " + fmtTime(latest.t, true) +
+          (def.band ? ". Expected " + def.band[0] + " to " + def.band[1] +
+                      (def.unit ? " " + def.unit : "") + "." : "") +
+          (stale ? " The sensor has not reported since then." : "");
+        box.appendChild(chip);
+        shown++;
+      });
+      if (latest.battery !== null && latest.battery !== undefined && latest.battery <= 20) {
+        var bat = document.createElement("div");
+        bat.className = "air-chip out";
+        var bk = document.createElement("span");
+        bk.className = "k"; bk.textContent = "Sensor battery";
+        bat.appendChild(bk);
+        var bb = document.createElement("b");
+        bb.textContent = fmt(latest.battery, 0) + " %";
+        bat.appendChild(bb);
+        bat.title = "The air sensor's battery is low. Replace it before it stops reporting.";
+        box.appendChild(bat);
+        shown++;
+      }
+    });
+
+    // Tuya's cloud access runs on a subscription. When it lapses their API
+    // stops answering and the chiller column freezes exactly as it stands,
+    // which looks identical to nothing having changed. Better to say so a
+    // fortnight early than to trust a stuck reading in November.
+    var pl = state.data.plugs || {};
+    if (pl.enabled && pl.subscription_expires) {
+      var left = Math.ceil((pl.subscription_expires - today()) / DAY);
+      if (left <= (pl.subscription_warn_days || 14)) {
+        var sub = document.createElement("div");
+        sub.className = "air-chip out";
+        var sk = document.createElement("span");
+        sk.className = "k";
+        sk.textContent = "Plug data access";
+        sub.appendChild(sk);
+        var sb = document.createElement("b");
+        sb.textContent = left < 0 ? "expired" : left === 0 ? "expires today"
+                                              : "ends in " + left + " days";
+        sub.appendChild(sb);
+        var sw = document.createElement("span");
+        sw.className = "when";
+        sw.textContent = fmtDate(pl.subscription_expires);
+        sub.appendChild(sw);
+        sub.title = "The Tuya subscription that lets this page read the plugs " +
+          (left < 0 ? "lapsed on " : "ends on ") + fmtDate(pl.subscription_expires) +
+          ". Until it is renewed the chiller column stops updating, without " +
+          "any other sign that it has. The tanks and their chillers are " +
+          "unaffected: this is about the readings, not the equipment.";
+        box.appendChild(sub);
+        shown++;
+      }
+    }
+
+    box.hidden = shown === 0;
+  }
+
   function renderOverview() {
     var host = el("overview");
     var devices = (state.data.devices || []).slice();
@@ -1015,6 +1239,20 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
       }
       hr.appendChild(th);
     });
+    var showPlugs = plugsEnabled();
+    if (showPlugs) {
+      var thPlug = document.createElement("th");
+      thPlug.scope = "col"; thPlug.className = "n";
+      thPlug.appendChild(document.createTextNode("Chiller"));
+      var plugLim = document.createElement("span");
+      plugLim.className = "lim";
+      plugLim.textContent = "state, since";
+      thPlug.appendChild(plugLim);
+      thPlug.title = "What the chiller's plug reports. Switched from the Smart " +
+        "Life app: this page only reads it.";
+      hr.appendChild(thPlug);
+    }
+
     var thSlide = document.createElement("th");
     thSlide.scope = "col"; thSlide.className = "n";
     thSlide.appendChild(document.createTextNode("Slide"));
@@ -1036,7 +1274,7 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
         var sr = document.createElement("tr");
         sr.className = "sys";
         var td = document.createElement("td");
-        td.colSpan = params.length + 3;
+        td.colSpan = params.length + (showPlugs ? 4 : 3);
         td.textContent = d.system_label || ("System " + system);
         sr.appendChild(td);
         body.appendChild(sr);
@@ -1094,6 +1332,9 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
         }
       });
 
+      var plug = showPlugs ? plugStateFor(d) : null;
+      if (showPlugs) tr.appendChild(plugCell(d));
+
       var slide = slideFor(d.device_id);
       var tdSlide = document.createElement("td");
       var skind = !slide ? "offline" : slide.kind === "ok" ? "in-band"
@@ -1130,6 +1371,20 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
           }).join(" and ") + " " +
           (worstHere === "critical" ? "past its hard limit" : "outside the working range") });
       }
+      // A chiller cycling off is normal and is not reported. A chiller off
+      // while its own sump is above the working range is the pairing worth
+      // saying out loud, and it is exactly what the temperature trace on its
+      // own cannot tell you.
+      if (plug && plug.kind === "concern") {
+        if (STATUS_RANK["out-band"] > STATUS_RANK[worst]) worst = "out-band";
+        trouble.push({ sump: name, kind: "out-band",
+                       text: name + " is above its working range with the chiller off" });
+      } else if (plug && plug.kind === "stale") {
+        if (STATUS_RANK.offline > STATUS_RANK[worst]) worst = "offline";
+        trouble.push({ sump: name, kind: "offline",
+                       text: name + "'s chiller plug has stopped reporting" });
+      }
+
       if (slide && slide.days <= 0) {
         trouble.push({ sump: name, kind: "critical", text: name + " slide is overdue" });
       } else if (slide && slide.kind === "warning") {
@@ -1150,6 +1405,7 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
     });
     table.appendChild(body);
 
+    renderAir();
     renderOverviewBanner(worst, trouble, devices.length);
     renderOverviewKey();
   }
@@ -1203,6 +1459,20 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
       span.appendChild(document.createTextNode(STATUS_MARK[k[0]] + "  " + k[2]));
       box.appendChild(span);
     });
+
+    if (plugsEnabled()) {
+      [["●", "chiller running"], ["○", "chiller off"],
+       ["△", "off while the sump is too warm"],
+       ["·", "plug not reporting"]].forEach(function (k) {
+        var span = document.createElement("span");
+        span.appendChild(document.createTextNode(k[0] + "  " + k[1]));
+        box.appendChild(span);
+      });
+      var note = document.createElement("span");
+      note.textContent = "Chillers are switched from the Smart Life app; " +
+        "this page only reads them.";
+      box.appendChild(note);
+    }
   }
 
   function renderAlerts() {
