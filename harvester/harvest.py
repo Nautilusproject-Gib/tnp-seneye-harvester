@@ -30,8 +30,6 @@ if __package__ in (None, ""):  # allow `python harvester/harvest.py`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harvester.export import build_payload, write_csv, write_payload
-from harvester.maintenance import build_payload as build_board
-from harvester.maintenance import load as load_maintenance
 from harvester.nutrients import load as load_nutrients
 from harvester.plugs import load as load_plugs
 from harvester.seneye import SeneyeClient, SeneyeError
@@ -170,9 +168,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # Maintenance issues and planned jobs. Named people appear in this log, so
     # it is written outside the published dashboard folder by default.
+    # The maintenance board is imported here rather than at the top of the file
+    # on purpose. It is an optional feature, off in this deployment, and a
+    # module-level import made a missing or broken maintenance.py abort the
+    # whole run before a single reading was collected. Nothing optional should
+    # be able to stop the water readings.
     maint_cfg = config.get("maintenance", {}) or {}
     if maint_cfg.get("enabled", True) and not args.skip_maintenance:
         try:
+            from harvester.maintenance import build_payload as build_board
+            from harvester.maintenance import load as load_maintenance
+
             load_maintenance(store, config, ROOT)
             board = build_board(store, config)
             board_path = os.path.join(ROOT, maint_cfg.get("out", "board/data/maintenance.json"))
