@@ -950,12 +950,39 @@ class TestPlugPolling(unittest.TestCase):
         self.assertAlmostEqual(reading.air_temperature, 21.3)
         self.assertAlmostEqual(reading.humidity, 57.0)
 
-    def test_a_shared_meter_is_not_attributed_to_either_socket(self):
-        # One power figure cannot be split between two chillers, so claiming it
-        # for both would double the nursery's apparent draw.
-        result = plugs.poll(FakeTuya(plug_codes()), PLUG_CONFIG, now=1000)
+    def test_a_shared_meter_goes_to_the_only_socket_drawing(self):
+        # plug_codes has switch_1 on and switch_2 off, so the plug's 112.4 W is
+        # unambiguously the first chiller's.
+        result = plugs.poll(FakeTuya(plug_codes(d1=True, d2=False)), PLUG_CONFIG, now=1000)
+        by_socket = {s.socket: s for s in result.sockets if s.device_id == "plugD"}
+        self.assertAlmostEqual(by_socket["switch_1"].power_w, 112.4)
+        self.assertIsNone(by_socket["switch_2"].power_w)
+
+    def test_a_shared_meter_is_not_split_when_both_sockets_are_on(self):
+        # One figure cannot be divided between two chillers, so claiming it for
+        # both would double the nursery's apparent draw and halving it would be
+        # an invention. The plug total is kept; neither socket claims it.
+        result = plugs.poll(FakeTuya(plug_codes(d1=True, d2=True)), PLUG_CONFIG, now=1000)
         doubles = [s for s in result.sockets if s.device_id == "plugD"]
         self.assertTrue(all(s.power_w is None for s in doubles))
+        self.assertTrue(all(s.plug_power_w == 112.4 for s in doubles))
+
+    def test_an_offline_plug_carries_the_time_contact_was_lost(self):
+        # A plug that dropped off the network days ago is still reporting the
+        # state it held then. Timestamping that with the moment we polled would
+        # present a four-day-old reading as current.
+        lost = 1000 - 4 * 86400
+        result = plugs.poll(FakeTuya(plug_codes(), online=False, update_time=lost),
+                            PLUG_CONFIG, now=1000)
+        switches = [s for s in result.sockets]
+        self.assertTrue(all(s.reading_time == 1000 for s in switches))
+        self.assertTrue(all(s.last_contact == lost for s in switches))
+        self.assertTrue(all(s.online == 0 for s in switches))
+
+    def test_an_online_plug_is_in_contact_now_whatever_its_record_says(self):
+        result = plugs.poll(FakeTuya(plug_codes(), update_time=1000 - 6 * 3600),
+                            PLUG_CONFIG, now=1000)
+        self.assertTrue(all(s.last_contact == 1000 for s in result.sockets))
 
     def test_a_device_that_answers_nothing_is_listed_as_offline(self):
         codes = plug_codes()
@@ -963,16 +990,41 @@ class TestPlugPolling(unittest.TestCase):
         result = plugs.poll(FakeTuya(codes, online=False), PLUG_CONFIG, now=1000)
         self.assertIn("plugE", result.offline)
 
-    def test_the_devices_own_timestamp_is_preferred_over_the_clock(self):
-        result = plugs.poll(FakeTuya(plug_codes(), update_time=900), PLUG_CONFIG, now=1000)
-        self.assertTrue(all(s.reading_time == 900 for s in result.sockets))
+    def test_a_switch_is_timestamped_when_it_answered_not_when_it_last_changed(self):
+        # Tuya's update_time on a switch is the last time the device record
+        # changed, so a chiller nobody has touched for a fortnight reports a
+        # fortnight-old timestamp while working perfectly. Reading that as a
+        # heartbeat marked every plug in the nursery as dead.
+        stale = 1000 - 14 * 86400
+        result = plugs.poll(FakeTuya(plug_codes(), update_time=stale),
+                            PLUG_CONFIG, now=1000)
+        self.assertTrue(all(s.reading_time == 1000 for s in result.sockets))
+
+    def test_a_sensor_keeps_its_own_measurement_time(self):
+        result = plugs.poll(FakeTuya(plug_codes(), update_time=940),
+                            PLUG_CONFIG, now=1000)
+        self.assertEqual(result.ambient[0].reading_time, 940)
+
+    def test_a_sensor_silent_for_over_a_week_falls_back_to_the_clock(self):
+        old = 1000 - 9 * 86400
+        result = plugs.poll(FakeTuya(plug_codes(), update_time=old),
+                            PLUG_CONFIG, now=1000)
+        self.assertEqual(result.ambient[0].reading_time, 1000)
+
+    def test_a_device_that_returns_no_data_points_is_marked_offline(self):
+        codes = plug_codes()
+        codes.pop("plugE")
+        result = plugs.poll(FakeTuya(codes), PLUG_CONFIG, now=1000)
+        quiet = [s for s in result.sockets if s.device_id == "plugE"]
+        self.assertTrue(quiet)
+        self.assertTrue(all(s.online == 0 for s in quiet))
 
     def test_an_absurd_device_timestamp_falls_back_to_the_clock(self):
         # A sensor reporting a date in 2038 should not make the dashboard say
         # its reading is fresh for the next twelve years.
         result = plugs.poll(FakeTuya(plug_codes(), update_time=2 ** 31),
                             PLUG_CONFIG, now=1000)
-        self.assertTrue(all(s.reading_time == 1000 for s in result.sockets))
+        self.assertEqual(result.ambient[0].reading_time, 1000)
 
     def test_nothing_is_polled_when_no_devices_are_configured(self):
         result = plugs.poll(FakeTuya({}), {"plugs": {"enabled": True}}, now=1000)
@@ -1046,6 +1098,42 @@ class TestPlugStorage(unittest.TestCase):
         )
         self.assertEqual([r["on_state"] for r in rows], [0, 1])
         self.assertEqual(rows[1]["changed_at"], 2800)
+
+    def test_an_offline_plug_goes_stale_even_though_its_state_is_unchanged(self):
+        # The bug this guards: last_seen used to be floored at the state's own
+        # timestamp, so a plug that lost the network days ago kept reporting a
+        # fresh last_seen and the dashboard trusted a stale state.
+        self.poll_into(plug_codes(), 100000)
+        result = plugs.poll(FakeTuya(plug_codes(), online=False, update_time=90000),
+                            PLUG_CONFIG, now=100000)
+        self.store.insert_plug_states(s.as_row() for s in result.sockets)
+        row = self.store.query(
+            "SELECT * FROM plug_states WHERE device_id = 'plugE' "
+            "ORDER BY changed_at DESC LIMIT 1")[0]
+        self.assertEqual(row["last_seen"], 90000)
+        self.assertEqual(row["online"], 0)
+
+    def test_a_column_added_after_release_is_migrated_in(self):
+        # A database written before plug_power_w existed must gain the column
+        # rather than failing every insert from then on.
+        store = Store("sqlite:///:memory:")
+        with store.cursor() as cur:
+            cur.execute("CREATE TABLE plug_states (device_id TEXT, socket TEXT, "
+                        "changed_at INTEGER, last_seen INTEGER, sump_code TEXT, "
+                        "role TEXT, on_state INTEGER, online INTEGER, power_w REAL, "
+                        "PRIMARY KEY (device_id, socket, changed_at))")
+        store.migrate()
+        result = plugs.poll(FakeTuya(plug_codes()), PLUG_CONFIG, now=1000)
+        self.assertEqual(store.insert_plug_states(s.as_row() for s in result.sockets), 3)
+        cols = {r["name"] for r in store.query("PRAGMA table_info(plug_states)")}
+        self.assertIn("plug_power_w", cols)
+
+    def test_migrating_twice_is_harmless(self):
+        store = Store("sqlite:///:memory:")
+        store.migrate()
+        store.migrate()
+        cols = {r["name"] for r in store.query("PRAGMA table_info(plug_states)")}
+        self.assertIn("plug_power_w", cols)
 
     def test_last_seen_advances_while_the_state_holds(self):
         self.poll_into(plug_codes(), 1000)
