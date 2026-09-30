@@ -463,6 +463,79 @@ silently wrong. Set `trust_sensor` to `false` to go by the logged dates only.
 student reads is right for the day they are reading it even if the last harvest
 ran hours ago.
 
+## Chiller plugs and the nursery air
+
+Each row of systems runs its chillers from one double-socket smart plug, and a
+temperature and humidity sensor sits in the nursery itself. Both are Tuya
+devices, paired in the Smart Life app, and the harvester reads them through
+Tuya's cloud API on the same half-hourly schedule as the water readings.
+
+**The dashboard reads and never writes.** It is a static file on a public
+website, so it can hold no credential, and a button on it would be a button any
+visitor could press. Switching stays in the phone app. What the page adds is
+the half of the story the temperature trace leaves out: which chiller is on,
+since when, and whether the plug has stopped answering. "SC34 is 21.5 °C and
+its chiller went off at 14:00" is a sentence worth reading, and it needs no
+ability to switch anything.
+
+A chiller being off is not reported as a fault, because they cycle. Two things
+are: a chiller off while its own sump is above the working range, and a plug
+that has not been heard from for longer than `stale_minutes`. The second
+matters because a plug that has gone quiet looks exactly like a plug that has
+not changed.
+
+### Setting it up
+
+Credentials come from the environment, never `config.json`:
+
+| Secret | Where it comes from |
+| --- | --- |
+| `TUYA_ACCESS_ID` | Access ID/Client ID, on the cloud project's Overview tab |
+| `TUYA_ACCESS_SECRET` | Access Secret/Client Secret, same page |
+
+Create the project at iot.tuya.com under **Cloud → Development**, industry and
+development method both **Smart Home**, data centre matching the region the
+phone app account was registered in. Then **Devices → Link Tuya App Account →
+Add App Account** and scan the QR code from the app's *Me* tab. The plugs
+appear in the project's device list once that is done; an empty list almost
+always means the wrong data centre.
+
+`config.json > plugs > region` has to match: `eu` is Central Europe, `weu`
+Western Europe, `us` Western America.
+
+### Which socket is which
+
+Nothing in the API says which of a double plug's two switch codes drives which
+physical socket, so it is not guessed. Run **Actions → Probe smart plugs** and
+note both values; switch one socket off in the app for a few seconds; run it
+again and see which code changed. That is two minutes per plug against a year
+of the dashboard quietly naming the wrong chiller.
+
+The same workflow prints every data point each device reports, which is also
+how to check the air sensor's scaling. Tuya send scaled integers, so 213 means
+21.3 °C; if humidity comes back as 655 rather than 65, set its scale to 10 in
+`config.json > plugs > devices > <id> > scales`.
+
+### The subscription
+
+Tuya put cloud access behind an IoT Core subscription that has to be renewed.
+When it lapses the API stops answering and the chiller column freezes exactly
+where it stood, which looks identical to nothing having changed. Record the
+expiry date in `plugs.subscription_expires`: every harvest warns in its log
+from thirty days out, and the dashboard shows it from `subscription_warn_days`.
+
+### How it is stored
+
+`plug_states` is a transition log, not a sample every half hour. A row is
+written when a socket changes state and its `last_seen` is bumped otherwise.
+Eleven sockets polled every thirty minutes would be two hundred thousand rows a
+year to say "still on"; this way the table holds the switching history, which
+is the part anyone would want to read back, and `changed_at` is already the
+answer to "since when".
+
+Air readings go in `ambient` and are deliberately kept out of the sump table.
+The air is context for what the water is doing, not a tenth sump to check.
+
 ## Importing history from Seneye
 
 The API only ever serves the last reading, so anything from before the harvester
@@ -630,6 +703,12 @@ recent 365 days of it.
   environment file; never in `config.json`.
 - Seneye publish this interface for hobbyist use with no support and no stated
   rate limit. The harvester makes one request per poll and backs off on errors.
+- Plug state is only ever as fresh as the last harvest, so the dashboard is not
+  a way to catch a chiller failing in the next five minutes. It is a way to
+  notice one that failed this morning, which is the failure that actually
+  happens. Anything faster would need a receiver running at the nursery.
+- Meross plugs have no official public API. Only the Tuya and Smart Life ones
+  are readable here.
 - If per-reading resolution becomes worth having, the alternative is the Seneye
   Local Data Exchange (`github.com/seneye/LDE`): the SWS or Connect app POSTs a
   JWT-signed payload for every reading to a URL you host. That needs an
@@ -651,6 +730,7 @@ Mock rows carry `slide_serial` values beginning `MOCK-`; clear them with
 
 ```
 harvester/    seneye.py (API client) · nutrients.py (sheet + workbook reader)
+              plugs.py (Tuya chiller plugs + air sensor, read only)
               maintenance.py (issues + planned jobs) · store.py (database)
               export.py (JSON) · harvest.py (CLI)
 dashboard/    index.html + data/   (public)

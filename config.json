@@ -189,6 +189,123 @@
       "_comment": "e.g. \"SA12\": \"2026-10-02\""
     }
   },
+  "plugs": {
+    "_comment": "Tuya smart plugs and the nursery air sensor, read only. The dashboard never switches anything: it is a static page on a public website, so it can hold no credential and a button on it would be a button anyone could press. Switching stays in the Smart Life app. Credentials live in the environment as TUYA_ACCESS_ID and TUYA_ACCESS_SECRET, never here. 'region' must match the data centre the Tuya cloud project was created in: 'eu' is Central Europe, 'weu' Western Europe, 'us' Western America. Each plug is a double, so each device has two sockets; which switch code drives which physical socket is not in the API, so confirm it with 'python tools/probe_plugs.py --toggle-test' before trusting the mapping. 'subscription_expires' is the expiry date of the project's IoT Core subscription on iot.tuya.com: Tuya stop answering when it lapses, which would leave the chiller column quietly frozen, so the dashboard says so once it is within 'subscription_warn_days' and every harvest warns in its log. Extend it on the platform and update the date here.",
+    "enabled": true,
+    "region": "eu",
+    "stale_minutes": 90,
+    "subscription_expires": "2026-10-31",
+    "subscription_warn_days": 14,
+    "note": "Chiller state is read from the plugs every harvest. It is shown here and switched from the Smart Life app.",
+    "reference": {
+      "air_temperature": {
+        "band": [
+          12,
+          28
+        ]
+      },
+      "humidity": {
+        "band": [
+          30,
+          80
+        ]
+      }
+    },
+    "devices": {
+      "_comment": "'sockets' maps a Tuya switch code to the sump its chiller serves. The socket order below is an assumption, lower-numbered sump on switch_1: run the toggle test and correct it if a plug turns out to be the other way round.",
+      "bfd5148eba3ca83ced8yvc": {
+        "label": "Row A chillers",
+        "kind": "switch",
+        "role": "chiller",
+        "row": "A",
+        "sockets": {
+          "switch_1": {
+            "sump": "SA12",
+            "role": "chiller"
+          },
+          "switch_2": {
+            "sump": "SA345",
+            "role": "chiller"
+          }
+        }
+      },
+      "bff817eb6b5406fef5vqp0": {
+        "label": "Row B chillers",
+        "kind": "switch",
+        "role": "chiller",
+        "row": "B",
+        "sockets": {
+          "switch_1": {
+            "sump": "SB12",
+            "role": "chiller"
+          },
+          "switch_2": {
+            "sump": "SB34",
+            "role": "chiller"
+          }
+        }
+      },
+      "bf7711584f5d1b0abf9ne8": {
+        "label": "Row C chillers",
+        "kind": "switch",
+        "role": "chiller",
+        "row": "C",
+        "sockets": {
+          "switch_1": {
+            "sump": "SC12",
+            "role": "chiller"
+          },
+          "switch_2": {
+            "sump": "SC34",
+            "role": "chiller"
+          }
+        }
+      },
+      "bf5b1b28499ad29ef7gl4l": {
+        "label": "Row D chillers",
+        "kind": "switch",
+        "role": "chiller",
+        "row": "D",
+        "sockets": {
+          "switch_1": {
+            "sump": "SD12",
+            "role": "chiller"
+          },
+          "switch_2": {
+            "sump": "SD345",
+            "role": "chiller"
+          }
+        }
+      },
+      "bfad29047a3f0995c7qrsm": {
+        "label": "Row E chillers",
+        "kind": "switch",
+        "role": "chiller",
+        "row": "E",
+        "sockets": {
+          "switch_1": {
+            "sump": "SE12",
+            "role": "chiller"
+          },
+          "switch_2": {
+            "sump": null,
+            "role": "chiller",
+            "label": "Row E second socket, spare"
+          }
+        }
+      },
+      "bf0dee5c3a68c22ad66baz": {
+        "label": "Nursery air",
+        "kind": "ambient",
+        "location": "inside the nursery",
+        "_comment": "Temperature and humidity of the air the tanks sit in, not of the water. 'scales' divides Tuya's scaled integers: their sensors report 213 for 21.3 degrees, so 10 for temperature. If the probe shows humidity as 655 rather than 65, set its scale to 10 as well.",
+        "scales": {
+          "air_temperature": 10,
+          "humidity": 1
+        }
+      }
+    }
+  },
   "nutrients": {
     "_comment": "In-situ samples taken by hand at the sumps, on different instruments from the Seneye probes. Read live from the Google Sheet on every run: paste the sheet's URL below, and in Sheets use File > Share > Publish to web > Nutrient > Comma-separated values so the harvester can read it without a login. Rows are matched to sumps by the Tank ID column (A12 -> SA12) and keyed on date + sump, so a corrected sheet overwrites the old values rather than duplicating them. If the fetch fails the stored samples are left untouched and data/nutrients.xlsx is used if present.",
     "sheet_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS1m0jTUzyvyRZsUb-nCuRp5u3TtrWodfbNy3Y0FYeVuwmZYS9ELIS0t6fKGqm-eAUhgLmSJY844bxY/pub?gid=1845791900&single=true&output=csv",
