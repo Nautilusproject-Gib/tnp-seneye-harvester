@@ -1,0 +1,520 @@
+"""Tuya cloud client for the nursery's smart plugs and air sensor.
+
+Two kinds of device sit on the Tuya account:
+
+* double-socket plugs, one per row of systems, each socket switching a chiller
+  for one sump. The dashboard reads their state and never writes it: the page
+  is a static file on a public website and cannot hold a credential, so
+  switching stays in the phone app where it belongs.
+* a temperature and humidity sensor inside the nursery, which measures the air
+  the tanks sit in rather than the water. Worth having: a sump climbing on a
+  hot afternoon with its chiller drawing power is a different fault from a
+  sump climbing with its chiller switched off.
+
+No third-party dependencies. Tuya sign requests with HMAC-SHA256 over a
+canonical string, which is a dozen lines of `hmac` and `hashlib`.
+
+Credentials come from the environment, never the config file:
+
+    TUYA_ACCESS_ID      "Access ID/Client ID" from the cloud project
+    TUYA_ACCESS_SECRET  "Access Secret/Client Secret" from the same page
+
+Docs: https://developer.tuya.com/en/docs/cloud/
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Any, Iterable
+
+USER_AGENT = "tnp-seneye-harvester/1.0 (+https://github.com/Nautilusproject-Gib)"
+
+# Tuya route every account to one data centre and refuse calls sent to another,
+# so this has to match the region the cloud project was created in. Gibraltar
+# accounts are normally Central Europe.
+REGIONS = {
+    "eu": "https://openapi.tuyaeu.com",          # Central Europe
+    "weu": "https://openapi-weaz.tuyaeu.com",    # Western Europe
+    "us": "https://openapi.tuyaus.com",          # Western America
+    "eus": "https://openapi-ueaz.tuyaus.com",    # Eastern America
+    "cn": "https://openapi.tuyacn.com",          # China
+    "in": "https://openapi.tuyain.com",          # India
+}
+
+EMPTY_BODY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+# What a socket's on/off state is called in Tuya's data points. A single-socket
+# plug reports `switch` or `switch_1`; a double reports both `switch_1` and
+# `switch_2`.
+SWITCH_CODES = ("switch", "switch_1", "switch_2", "switch_3", "switch_4")
+
+# Air sensor data points, with the divisor Tuya apply. Their API reports scaled
+# integers: 213 means 21.3 degrees. The divisors are overridable per device in
+# config.json because cheaper sensors are not consistent about it.
+AMBIENT_CODES = {
+    "air_temperature": (("va_temperature", "temp_current", "temperature"), 10.0),
+    "humidity": (("va_humidity", "humidity_value", "humidity"), 1.0),
+    "battery": (("battery_percentage", "battery_state", "battery"), 1.0),
+}
+
+# Energy monitoring, on the plugs that have it. Absent on most cheap doubles,
+# which is fine: a socket's on/off state is the useful part.
+POWER_CODES = {
+    "power_w": (("cur_power",), 10.0),
+    "voltage_v": (("cur_voltage",), 10.0),
+    "current_ma": (("cur_current",), 1.0),
+}
+
+
+class TuyaError(RuntimeError):
+    pass
+
+
+@dataclass
+class SocketState:
+    """One socket of one plug, at one instant."""
+
+    device_id: str
+    socket: str
+    reading_time: int
+    sump_code: str | None = None
+    role: str | None = None
+    label: str | None = None
+    on_state: int | None = None
+    online: int | None = None
+    power_w: float | None = None
+
+    def as_row(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "socket": self.socket,
+            "reading_time": self.reading_time,
+            "sump_code": self.sump_code,
+            "role": self.role,
+            "on_state": self.on_state,
+            "online": self.online,
+            "power_w": self.power_w,
+        }
+
+
+@dataclass
+class AmbientReading:
+    """Air temperature and humidity inside the nursery."""
+
+    device_id: str
+    reading_time: int
+    air_temperature: float | None = None
+    humidity: float | None = None
+    battery: float | None = None
+    online: int | None = None
+
+    def as_row(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "reading_time": self.reading_time,
+            "air_temperature": self.air_temperature,
+            "humidity": self.humidity,
+            "battery": self.battery,
+            "online": self.online,
+        }
+
+
+@dataclass
+class Poll:
+    sockets: list[SocketState] = field(default_factory=list)
+    ambient: list[AmbientReading] = field(default_factory=list)
+    raw: dict[str, dict[str, Any]] = field(default_factory=dict)
+    offline: list[str] = field(default_factory=list)
+
+
+class TuyaClient:
+    def __init__(
+        self,
+        access_id: str,
+        access_secret: str,
+        region: str = "eu",
+        timeout: int = 20,
+        retries: int = 3,
+    ):
+        if not access_id or not access_secret:
+            raise TuyaError(
+                "Tuya credentials missing. Set TUYA_ACCESS_ID and TUYA_ACCESS_SECRET."
+            )
+        self.access_id = access_id
+        self.access_secret = access_secret.encode("utf-8")
+        self.base = REGIONS.get(str(region).lower(), region if str(region).startswith("http")
+                                else REGIONS["eu"])
+        self.timeout = timeout
+        self.retries = retries
+        self._token: str | None = None
+        self._token_expires = 0
+
+    # -- signing -----------------------------------------------------------
+
+    def _canonical(self, method: str, path: str, query: dict[str, str] | None) -> str:
+        """Tuya's URL for signing: query parameters sorted by key."""
+        if not query:
+            return path
+        items = sorted(query.items())
+        return path + "?" + urllib.parse.urlencode(items)
+
+    def _sign(self, method: str, url_for_sign: str, body: str, token: str | None) -> dict[str, str]:
+        t = str(int(time.time() * 1000))
+        nonce = hashlib.md5((t + url_for_sign).encode("utf-8")).hexdigest()
+        digest = (hashlib.sha256(body.encode("utf-8")).hexdigest() if body
+                  else EMPTY_BODY_SHA256)
+        # METHOD \n body-hash \n signature-headers \n url. The third line is
+        # empty because no headers are included in the signature.
+        to_sign = f"{method.upper()}\n{digest}\n\n{url_for_sign}"
+        message = self.access_id + (token or "") + t + nonce + to_sign
+        signature = hmac.new(
+            self.access_secret, message.encode("utf-8"), hashlib.sha256
+        ).hexdigest().upper()
+        headers = {
+            "client_id": self.access_id,
+            "sign": signature,
+            "t": t,
+            "nonce": nonce,
+            "sign_method": "HMAC-SHA256",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        }
+        if token:
+            headers["access_token"] = token
+        return headers
+
+    # -- transport ---------------------------------------------------------
+
+    def _call(
+        self,
+        method: str,
+        path: str,
+        query: dict[str, str] | None = None,
+        body: Any = None,
+        authed: bool = True,
+    ) -> Any:
+        url_for_sign = self._canonical(method, path, query)
+        payload = json.dumps(body, separators=(",", ":")) if body is not None else ""
+        token = self.token() if authed else None
+        headers = self._sign(method, url_for_sign, payload, token)
+        if payload:
+            headers["Content-Type"] = "application/json"
+
+        req = urllib.request.Request(
+            self.base + url_for_sign,
+            data=payload.encode("utf-8") if payload else None,
+            headers=headers,
+            method=method.upper(),
+        )
+
+        last_err: Exception | None = None
+        for attempt in range(self.retries):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    parsed = json.loads(resp.read().decode("utf-8", "replace"))
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code in (401, 403):
+                    raise TuyaError(
+                        f"Tuya rejected the request (HTTP {exc.code}) for {path}. "
+                        "Check TUYA_ACCESS_ID / TUYA_ACCESS_SECRET and that the "
+                        "cloud project's data centre matches config.json > plugs > region."
+                    ) from exc
+                last_err = exc
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                last_err = exc
+            time.sleep(2 ** attempt)
+        else:
+            raise TuyaError(f"Tuya request failed for {path}: {last_err}")
+
+        if not isinstance(parsed, dict):
+            raise TuyaError(f"Unexpected Tuya payload for {path}: {parsed!r}")
+        if not parsed.get("success", False):
+            code = parsed.get("code")
+            msg = parsed.get("msg") or "no message"
+            hint = ""
+            if code in (1106, 1114, 28841002, 28841105):
+                # The ones that actually happen: an unsubscribed or lapsed IoT
+                # Core trial, or plugs never linked to the cloud project.
+                hint = (" This usually means the project's IoT Core subscription has "
+                        "lapsed, or the app account is no longer linked to it. "
+                        "Check Cloud > Cloud Services > IoT Core on iot.tuya.com.")
+            raise TuyaError(f"Tuya error {code} for {path}: {msg}.{hint}")
+        return parsed.get("result")
+
+    def token(self) -> str:
+        if self._token and time.time() < self._token_expires - 60:
+            return self._token
+        result = self._call(
+            "GET", "/v1.0/token", {"grant_type": "1"}, authed=False
+        ) or {}
+        tok = result.get("access_token")
+        if not tok:
+            raise TuyaError(f"Tuya returned no access token: {result!r}")
+        self._token = str(tok)
+        self._token_expires = time.time() + float(result.get("expire_time") or 7200)
+        return self._token
+
+    # -- endpoints ---------------------------------------------------------
+
+    def status(self, device_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Current data points for each device, as {device_id: {code: value}}.
+
+        Tries the batch endpoint first, because one call for six devices beats
+        six calls, and falls back to per-device requests if the account's API
+        version does not serve it.
+        """
+        ids = [str(i) for i in device_ids if i]
+        if not ids:
+            return {}
+        try:
+            result = self._call(
+                "GET", "/v1.0/iot-03/devices/status", {"device_ids": ",".join(ids)}
+            )
+            out: dict[str, dict[str, Any]] = {}
+            for entry in result or []:
+                did = str(entry.get("id"))
+                out[did] = {str(s.get("code")): s.get("value")
+                            for s in (entry.get("status") or [])}
+            if out:
+                return out
+        except TuyaError:
+            pass
+
+        out = {}
+        for did in ids:
+            try:
+                result = self._call("GET", f"/v1.0/devices/{did}/status")
+            except TuyaError:
+                continue
+            out[did] = {str(s.get("code")): s.get("value") for s in (result or [])}
+        return out
+
+    def info(self, device_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Name and online flag per device.
+
+        Kept separate from status because "the plug says it is on" and "the
+        plug has been unreachable since Tuesday" are different facts, and only
+        one of them is in the data points.
+        """
+        ids = [str(i) for i in device_ids if i]
+        out: dict[str, dict[str, Any]] = {}
+        for did in ids:
+            try:
+                result = self._call("GET", f"/v1.0/devices/{did}") or {}
+            except TuyaError:
+                continue
+            out[did] = {
+                "name": result.get("name"),
+                "online": 1 if result.get("online") else 0,
+                "product_name": result.get("product_name"),
+                "update_time": _as_int(result.get("update_time")),
+            }
+        return out
+
+
+# -- polling -------------------------------------------------------------------
+
+
+def poll(client: TuyaClient, config: dict[str, Any], now: int | None = None) -> Poll:
+    """One pass over every configured Tuya device."""
+    now = int(now if now is not None else time.time())
+    cfg = (config.get("plugs") or {})
+    devices_cfg = {k: v for k, v in (cfg.get("devices") or {}).items()
+                   if not k.startswith("_")}
+    if not devices_cfg:
+        return Poll()
+
+    ids = list(devices_cfg)
+    status = client.status(ids)
+    info = client.info(ids)
+
+    out = Poll(raw=status)
+
+    for did, dcfg in devices_cfg.items():
+        codes = status.get(did) or {}
+        meta = info.get(did) or {}
+        online = meta.get("online")
+        if online is None:
+            online = 1 if codes else 0
+        if not codes:
+            out.offline.append(did)
+
+        # Tuya report the device's own last-update time in seconds. Prefer it:
+        # a sensor that stopped reporting on Tuesday should not look fresh
+        # just because the harvester ran today.
+        seen = meta.get("update_time") or now
+        if seen > now + 300 or seen < now - 90 * 86400:
+            seen = now
+
+        kind = str(dcfg.get("kind") or "switch").lower()
+
+        if kind == "ambient":
+            scales = dcfg.get("scales") or {}
+            values: dict[str, float | None] = {}
+            for field_name, (candidates, default_div) in AMBIENT_CODES.items():
+                raw = _first(codes, candidates)
+                div = float(scales.get(field_name, default_div) or 1.0)
+                values[field_name] = None if raw is None else _as_float(raw, div)
+            out.ambient.append(
+                AmbientReading(
+                    device_id=did,
+                    reading_time=seen,
+                    air_temperature=values.get("air_temperature"),
+                    humidity=values.get("humidity"),
+                    battery=values.get("battery"),
+                    online=online,
+                )
+            )
+            continue
+
+        sockets_cfg = {k: v for k, v in (dcfg.get("sockets") or {}).items()
+                       if not k.startswith("_")}
+        if not sockets_cfg:
+            # No mapping written down yet: report whatever switches the plug
+            # has, unassigned, so they show up in the probe rather than
+            # vanishing silently.
+            sockets_cfg = {code: {} for code in SWITCH_CODES if code in codes}
+
+        power = _first(codes, POWER_CODES["power_w"][0])
+        power_w = None if power is None else _as_float(power, POWER_CODES["power_w"][1])
+        single = len(sockets_cfg) == 1
+
+        for code, scfg in sockets_cfg.items():
+            raw = codes.get(code)
+            if raw is None and code == "switch_1":
+                raw = codes.get("switch")
+            on_state = None if raw is None else (1 if raw in (True, 1, "true", "1") else 0)
+            out.sockets.append(
+                SocketState(
+                    device_id=did,
+                    socket=code,
+                    reading_time=seen,
+                    sump_code=scfg.get("sump"),
+                    role=scfg.get("role") or dcfg.get("role"),
+                    label=scfg.get("label") or dcfg.get("label") or meta.get("name"),
+                    on_state=on_state,
+                    online=online,
+                    # A shared meter cannot be split between two sockets, so it
+                    # is only attributed when the plug has one socket in use.
+                    power_w=power_w if single else None,
+                )
+            )
+
+    return out
+
+
+def load(store, config: dict[str, Any], env: dict[str, str] | None = None) -> dict[str, int]:
+    """Poll Tuya and store what came back. Returns a small summary.
+
+    Raises TuyaError on a failure the caller should report; the harvester
+    treats that as non-fatal, because a plug reading going missing must never
+    stop the water readings being collected.
+    """
+    import os
+
+    env = env if env is not None else dict(os.environ)
+    cfg = (config.get("plugs") or {})
+    if not cfg.get("enabled", False):
+        return {"sockets": 0, "ambient": 0, "skipped": 1}
+
+    client = TuyaClient(
+        access_id=env.get("TUYA_ACCESS_ID", ""),
+        access_secret=env.get("TUYA_ACCESS_SECRET", ""),
+        region=cfg.get("region", "eu"),
+    )
+    result = poll(client, config)
+    sockets = store.insert_plug_states(s.as_row() for s in result.sockets)
+    ambient = store.insert_ambient(a.as_row() for a in result.ambient)
+    return {
+        "sockets": sockets,
+        "ambient": ambient,
+        "polled": len(result.sockets) + len(result.ambient),
+        "offline": len(result.offline),
+        "subscription_days": subscription_days(cfg),
+    }
+
+
+def subscription_days(cfg: dict[str, Any], now: float | None = None) -> int | None:
+    """Days until the Tuya IoT Core subscription lapses, if a date is recorded.
+
+    When it does lapse the API stops answering and the plug column freezes
+    where it stands, so this is worth shouting about a fortnight early rather
+    than discovering it from a chiller that has been "on" since October.
+    """
+    import datetime
+
+    raw = cfg.get("subscription_expires")
+    if not raw:
+        return None
+    try:
+        day = datetime.datetime.strptime(str(raw).strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    expires = day.replace(tzinfo=datetime.timezone.utc).timestamp()
+    return int((expires - (now if now is not None else time.time())) // 86400)
+
+
+def describe(client: TuyaClient, device_ids: Iterable[str]) -> str:
+    """Human-readable dump of every data point each device reports.
+
+    This exists so the socket-to-sump mapping can be written from what the
+    plugs actually say rather than from a guess about naming. Run it once,
+    read the output, fill in config.json.
+    """
+    ids = [str(i) for i in device_ids if i]
+    status = client.status(ids)
+    info = client.info(ids)
+    lines: list[str] = []
+    for did in ids:
+        meta = info.get(did) or {}
+        codes = status.get(did) or {}
+        lines.append("")
+        lines.append(f"{did}  {meta.get('name') or '(no name)'}")
+        lines.append(f"  product: {meta.get('product_name') or 'unknown'}")
+        lines.append(f"  online:  {'yes' if meta.get('online') else 'no'}")
+        if meta.get("update_time"):
+            lines.append("  last update: " + time.strftime(
+                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(meta["update_time"])))
+        if not codes:
+            lines.append("  no data points returned")
+            continue
+        lines.append("  data points:")
+        for code in sorted(codes):
+            lines.append(f"    {code:<24} {codes[code]!r}")
+        switches = [c for c in codes if c in SWITCH_CODES]
+        if switches:
+            lines.append("  switch codes to map in config.json > plugs > devices > "
+                         f"{did} > sockets: " + ", ".join(sorted(switches)))
+    return "\n".join(lines)
+
+
+# -- helpers -------------------------------------------------------------------
+
+
+def _first(codes: dict[str, Any], candidates: Iterable[str]) -> Any:
+    for name in candidates:
+        if name in codes and codes[name] is not None:
+            return codes[name]
+    return None
+
+
+def _as_float(value: Any, divisor: float = 1.0) -> float | None:
+    try:
+        return round(float(value) / (divisor or 1.0), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
