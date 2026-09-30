@@ -241,6 +241,7 @@ class Store:
                     on_state INTEGER,
                     online INTEGER,
                     power_w {numeric},
+                    plug_power_w {numeric},
                     PRIMARY KEY (device_id, socket, changed_at)
                 )
                 """
@@ -265,6 +266,12 @@ class Store:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ambient_time ON ambient (reading_time)"
             )
+
+            # CREATE TABLE IF NOT EXISTS is silent about a table that already
+            # exists with fewer columns, so a database written by an earlier
+            # version keeps its old shape and every later insert fails. Columns
+            # added after a table has shipped have to be added explicitly.
+            self._add_column(cur, "plug_states", "plug_power_w", numeric)
 
             cur.execute(
                 f"""
@@ -300,6 +307,32 @@ class Store:
                 )
                 """
             )
+
+    def _add_column(self, cur, table: str, column: str, coltype: str) -> bool:
+        """Add a column to an existing table, doing nothing if it is there.
+
+        Written by hand because SQLite has no IF NOT EXISTS for ALTER TABLE.
+        The check reads the catalogue rather than trying a SELECT and catching
+        the error: on PostgreSQL a failed statement aborts the whole
+        transaction, so probing by failure would take the rest of the
+        migration down with it.
+        """
+        if self.scheme == "sqlite":
+            cur.execute(f"PRAGMA table_info({table})")
+            existing = {row[1] for row in cur.fetchall()}
+        else:
+            cur.execute(
+                self.sql(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = ?"
+                ),
+                (table,),
+            )
+            existing = {str(row[0]).lower() for row in cur.fetchall()}
+        if not existing or column.lower() in {c.lower() for c in existing}:
+            return False
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+        return True
 
     # -- writes ------------------------------------------------------------
 
@@ -435,20 +468,30 @@ class Store:
                 )
                 prev = cur.fetchone()
                 seen = int(row["reading_time"])
+                contact = row.get("last_contact")
+                contact = int(contact) if contact is not None else seen
                 if prev is not None:
                     prev_changed = int(prev[0])
                     same = (_same(prev[1], row.get("on_state"))
                             and _same(prev[2], row.get("online")))
                     if same:
+                        # last_seen is taken as given, not maxed against
+                        # changed_at. A plug that dropped off the network days
+                        # ago has a last contact older than the state it is
+                        # still reporting, and flooring it at the state's own
+                        # timestamp would quietly make a dead plug look fresh.
                         cur.execute(
                             self.sql(
                                 "UPDATE plug_states SET last_seen = ?, power_w = ?, "
-                                "sump_code = ?, role = ? WHERE device_id = ? AND "
-                                "socket = ? AND changed_at = ?"
+                                "plug_power_w = ?, online = ?, sump_code = ?, "
+                                "role = ? WHERE device_id = ? AND socket = ? "
+                                "AND changed_at = ?"
                             ),
                             (
-                                max(seen, int(prev[0])),
+                                contact,
                                 row.get("power_w"),
+                                row.get("plug_power_w"),
+                                row.get("online"),
                                 row.get("sump_code"),
                                 row.get("role"),
                                 row["device_id"],
@@ -466,19 +509,20 @@ class Store:
                 cur.execute(
                     self.sql(
                         "INSERT INTO plug_states (device_id, socket, changed_at, "
-                        "last_seen, sump_code, role, on_state, online, power_w) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        "last_seen, sump_code, role, on_state, online, power_w, "
+                        "plug_power_w) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                     ),
                     (
                         row["device_id"],
                         row["socket"],
                         seen,
-                        seen,
+                        contact,
                         row.get("sump_code"),
                         row.get("role"),
                         row.get("on_state"),
                         row.get("online"),
                         row.get("power_w"),
+                        row.get("plug_power_w"),
                     ),
                 )
                 changes += 1

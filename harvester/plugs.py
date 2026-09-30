@@ -84,23 +84,31 @@ class SocketState:
     device_id: str
     socket: str
     reading_time: int
+    # When Tuya last heard from the plug, which is NOT the same as when we
+    # polled. A plug that is online was in contact just now; one that is
+    # offline was last in contact whenever its record says, and that date is
+    # the honest answer to "how old is this reading".
+    last_contact: int | None = None
     sump_code: str | None = None
     role: str | None = None
     label: str | None = None
     on_state: int | None = None
     online: int | None = None
     power_w: float | None = None
+    plug_power_w: float | None = None
 
     def as_row(self) -> dict[str, Any]:
         return {
             "device_id": self.device_id,
             "socket": self.socket,
             "reading_time": self.reading_time,
+            "last_contact": self.last_contact,
             "sump_code": self.sump_code,
             "role": self.role,
             "on_state": self.on_state,
             "online": self.online,
             "power_w": self.power_w,
+            "plug_power_w": self.plug_power_w,
         }
 
 
@@ -346,15 +354,34 @@ def poll(client: TuyaClient, config: dict[str, Any], now: int | None = None) -> 
             online = 1 if codes else 0
         if not codes:
             out.offline.append(did)
+            online = 0
 
-        # Tuya report the device's own last-update time in seconds. Prefer it:
-        # a sensor that stopped reporting on Tuesday should not look fresh
-        # just because the harvester ran today.
-        seen = meta.get("update_time") or now
-        if seen > now + 300 or seen < now - 90 * 86400:
-            seen = now
-
+        # Tuya's `update_time` means different things on different devices, and
+        # reading it as a heartbeat was wrong. On a sensor it is the last
+        # measurement, which is what we want. On a switch it is the last time
+        # the device record changed, so a chiller nobody has touched for a
+        # fortnight reports a fortnight-old timestamp while sitting there
+        # working perfectly. Taking that as "last heard from" made every plug
+        # look dead. For a switch, the moment we asked and got an answer is the
+        # honest freshness, and whether the plug is reachable is what `online`
+        # is for.
         kind = str(dcfg.get("kind") or "switch").lower()
+        reported = _as_int(meta.get("update_time"))
+        sane = bool(reported and now - 365 * 86400 <= reported <= now + 300)
+
+        if kind == "ambient":
+            # A sensor's update_time IS its last measurement, so it is the
+            # reading time. A week of silence means the sensor is the problem,
+            # not the clock.
+            seen = reported if (sane and reported >= now - 7 * 86400) else now
+            contact = seen
+        else:
+            # A switch is polled, not pushed: the moment we asked and got an
+            # answer is when the reading is from. Its update_time is only
+            # meaningful once the plug has gone offline, when it says when
+            # contact was lost.
+            seen = now
+            contact = reported if (online == 0 and sane) else now
 
         if kind == "ambient":
             scales = dcfg.get("scales") or {}
@@ -384,14 +411,27 @@ def poll(client: TuyaClient, config: dict[str, Any], now: int | None = None) -> 
             sockets_cfg = {code: {} for code in SWITCH_CODES if code in codes}
 
         power = _first(codes, POWER_CODES["power_w"][0])
-        power_w = None if power is None else _as_float(power, POWER_CODES["power_w"][1])
-        single = len(sockets_cfg) == 1
+        plug_power = None if power is None else _as_float(power, POWER_CODES["power_w"][1])
 
-        for code, scfg in sockets_cfg.items():
+        def switch_value(code: str) -> Any:
             raw = codes.get(code)
             if raw is None and code == "switch_1":
                 raw = codes.get("switch")
-            on_state = None if raw is None else (1 if raw in (True, 1, "true", "1") else 0)
+            return raw
+
+        def is_on(raw: Any) -> int | None:
+            return None if raw is None else (1 if raw in (True, 1, "true", "1") else 0)
+
+        # The meter is per plug, not per socket. It can only be attributed when
+        # exactly one of the plug's sockets is drawing: with both chillers
+        # running, 857 W is the pair, and splitting it in half would be an
+        # invention. The plug total is carried either way, which is still worth
+        # having: a chiller reporting "on" at zero watts is a failed compressor
+        # or a tripped plug, and the switch state alone would never show it.
+        on_now = [c for c in sockets_cfg if is_on(switch_value(c)) == 1]
+
+        for code, scfg in sockets_cfg.items():
+            on_state = is_on(switch_value(code))
             out.sockets.append(
                 SocketState(
                     device_id=did,
@@ -400,11 +440,12 @@ def poll(client: TuyaClient, config: dict[str, Any], now: int | None = None) -> 
                     sump_code=scfg.get("sump"),
                     role=scfg.get("role") or dcfg.get("role"),
                     label=scfg.get("label") or dcfg.get("label") or meta.get("name"),
+                    last_contact=contact,
                     on_state=on_state,
                     online=online,
-                    # A shared meter cannot be split between two sockets, so it
-                    # is only attributed when the plug has one socket in use.
-                    power_w=power_w if single else None,
+                    power_w=(plug_power if (len(on_now) == 1 and on_now[0] == code)
+                             else None),
+                    plug_power_w=plug_power,
                 )
             )
 

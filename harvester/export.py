@@ -274,7 +274,8 @@ def _plugs(store, config: dict[str, Any], now: int, history_days: int = 14) -> d
     try:
         rows = store.query(
             "SELECT device_id, socket, changed_at, last_seen, sump_code, role, "
-            "on_state, online, power_w FROM plug_states ORDER BY changed_at"
+            "on_state, online, power_w, plug_power_w FROM plug_states "
+            "ORDER BY changed_at"
         )
     except Exception:  # table not created yet on an older database
         return {"enabled": True, "by_sump": {}, "sockets": [], "history": []}
@@ -316,6 +317,7 @@ def _plugs(store, config: dict[str, Any], now: int, history_days: int = 14) -> d
             "since": _as_int(r.get("changed_at")),
             "last_seen": seen,
             "power_w": _round(r.get("power_w")),
+            "plug_power_w": _round(r.get("plug_power_w")),
             # A plug the cloud has not heard from is not a plug that is off.
             # Saying so is the difference between a useful reading and a lie.
             "stale": bool(seen is not None and now - seen > stale_after),
