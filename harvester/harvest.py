@@ -10,9 +10,11 @@ reading, and exports the JSON the dashboard reads.
 
 Credentials come from the environment (never the config file):
 
-    SENEYE_USER   the Seneye account e-mail
-    SENEYE_PWD    the Seneye account password
-    DATABASE_URL  optional; defaults to sqlite:///data/nursery.db
+    SENEYE_USER          the Seneye account e-mail
+    SENEYE_PWD           the Seneye account password
+    TUYA_ACCESS_ID       Tuya cloud project Access ID, for the chiller plugs
+    TUYA_ACCESS_SECRET   Tuya cloud project Access Secret
+    DATABASE_URL         optional; defaults to sqlite:///data/nursery.db
 """
 
 from __future__ import annotations
@@ -28,7 +30,10 @@ if __package__ in (None, ""):  # allow `python harvester/harvest.py`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harvester.export import build_payload, write_csv, write_payload
+from harvester.maintenance import build_payload as build_board
+from harvester.maintenance import load as load_maintenance
 from harvester.nutrients import load as load_nutrients
+from harvester.plugs import load as load_plugs
 from harvester.seneye import SeneyeClient, SeneyeError
 from harvester.store import Store
 
@@ -52,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nutrients", default=None,
                     help="read samples from this .xlsx instead of the configured sheet")
     ap.add_argument("--skip-nutrients", action="store_true")
+    ap.add_argument("--skip-maintenance", action="store_true")
+    ap.add_argument("--skip-plugs", action="store_true")
     ap.add_argument("--export-only", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
@@ -126,6 +133,57 @@ def main(argv: list[str] | None = None) -> int:
             load_nutrients(store, config, ROOT)
         except Exception as exc:
             print(f"nutrients: could not load samples: {exc}", file=sys.stderr)
+
+    # Chiller plugs and the nursery air sensor, read from the Tuya cloud. Read
+    # only: nothing here ever switches anything. A Tuya failure is reported and
+    # stepped over, because a plug reading going missing must not stop the
+    # water readings being collected or published.
+    if args.skip_plugs:
+        print("plugs: skipped (--skip-plugs)")
+    else:
+        try:
+            summary = load_plugs(store, config)
+            if summary.get("skipped"):
+                pass
+            else:
+                print(
+                    f"plugs: {summary.get('polled', 0)} socket(s)/sensor(s) read, "
+                    f"{summary.get('sockets', 0)} state change(s), "
+                    f"{summary.get('ambient', 0)} new air reading(s)"
+                    + (f", {summary['offline']} device(s) not answering"
+                       if summary.get("offline") else "")
+                )
+                days = summary.get("subscription_days")
+                if days is not None and days <= 30:
+                    print(
+                        f"plugs: WARNING the Tuya IoT Core subscription "
+                        + (f"lapsed {abs(days)} day(s) ago"
+                           if days < 0 else f"expires in {days} day(s)")
+                        + ". Extend it at iot.tuya.com under Cloud > Cloud Services "
+                          "> IoT Core, then update plugs.subscription_expires in "
+                          "config.json. Until then the plug readings will stop "
+                          "updating without any other sign.",
+                        file=sys.stderr,
+                    )
+        except Exception as exc:
+            print(f"plugs: could not read the Tuya devices: {exc}", file=sys.stderr)
+
+    # Maintenance issues and planned jobs. Named people appear in this log, so
+    # it is written outside the published dashboard folder by default.
+    maint_cfg = config.get("maintenance", {}) or {}
+    if maint_cfg.get("enabled", True) and not args.skip_maintenance:
+        try:
+            load_maintenance(store, config, ROOT)
+            board = build_board(store, config)
+            board_path = os.path.join(ROOT, maint_cfg.get("out", "board/data/maintenance.json"))
+            write_payload(board, board_path)
+            print(
+                f"board: {board['counts']['open']} open, "
+                f"{board['counts']['in_progress']} in progress, "
+                f"{board['counts']['overdue']} job(s) overdue -> {board_path}"
+            )
+        except Exception as exc:
+            print(f"maintenance: could not build the board: {exc}", file=sys.stderr)
 
     export_cfg = config.get("export", {})
     payload = build_payload(

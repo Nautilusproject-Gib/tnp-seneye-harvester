@@ -223,6 +223,84 @@ class Store:
                 """
             )
 
+            # Smart plugs are stored as a transition log, not a sample every
+            # half hour: a row is written when a socket changes state and its
+            # last_seen is bumped otherwise. Eleven sockets polled every
+            # thirty minutes would be two hundred thousand rows a year to say
+            # "still on"; this way the table holds the switching history, which
+            # is the thing anyone would actually want to read back.
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS plug_states (
+                    device_id {text} NOT NULL,
+                    socket {text} NOT NULL,
+                    changed_at INTEGER NOT NULL,
+                    last_seen INTEGER,
+                    sump_code {text},
+                    role {text},
+                    on_state INTEGER,
+                    online INTEGER,
+                    power_w {numeric},
+                    PRIMARY KEY (device_id, socket, changed_at)
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_plug_states_seen "
+                "ON plug_states (device_id, socket, changed_at)"
+            )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS ambient (
+                    device_id {text} NOT NULL,
+                    reading_time INTEGER NOT NULL,
+                    air_temperature {numeric},
+                    humidity {numeric},
+                    battery {numeric},
+                    online INTEGER,
+                    PRIMARY KEY (device_id, reading_time)
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ambient_time ON ambient (reading_time)"
+            )
+
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS issues (
+                    issue_id {text} PRIMARY KEY,
+                    raised_on {text},
+                    raised_at {text},
+                    location {text},
+                    equipment {text},
+                    summary {text},
+                    severity {text},
+                    status {text},
+                    assigned_to {text},
+                    action_taken {text},
+                    resolved_on {text},
+                    reported_by {text},
+                    notes {text}
+                )
+                """
+            )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS schedule (
+                    task_id {text} PRIMARY KEY,
+                    task {text},
+                    location {text},
+                    equipment {text},
+                    frequency_days INTEGER,
+                    last_done {text},
+                    done_by {text},
+                    next_due {text},
+                    notes {text}
+                )
+                """
+            )
+
     # -- writes ------------------------------------------------------------
 
     def upsert_device(
@@ -334,6 +412,128 @@ class Store:
                 written += 1
         return written
 
+
+    def insert_plug_states(self, rows: Iterable[dict[str, Any]]) -> int:
+        """Append a row per socket only when its state has actually changed.
+
+        Returns the number of transitions recorded, so a run that found
+        everything as it left it reports zero rather than eleven.
+        """
+        rows = list(rows)
+        if not rows:
+            return 0
+        changes = 0
+        with self.cursor() as cur:
+            for row in rows:
+                cur.execute(
+                    self.sql(
+                        "SELECT changed_at, on_state, online FROM plug_states "
+                        "WHERE device_id = ? AND socket = ? "
+                        "ORDER BY changed_at DESC LIMIT 1"
+                    ),
+                    (row["device_id"], row["socket"]),
+                )
+                prev = cur.fetchone()
+                seen = int(row["reading_time"])
+                if prev is not None:
+                    prev_changed = int(prev[0])
+                    same = (_same(prev[1], row.get("on_state"))
+                            and _same(prev[2], row.get("online")))
+                    if same:
+                        cur.execute(
+                            self.sql(
+                                "UPDATE plug_states SET last_seen = ?, power_w = ?, "
+                                "sump_code = ?, role = ? WHERE device_id = ? AND "
+                                "socket = ? AND changed_at = ?"
+                            ),
+                            (
+                                max(seen, int(prev[0])),
+                                row.get("power_w"),
+                                row.get("sump_code"),
+                                row.get("role"),
+                                row["device_id"],
+                                row["socket"],
+                                prev_changed,
+                            ),
+                        )
+                        continue
+                    # A change that reports an older timestamp than the row it
+                    # supersedes would sort behind it and read as history
+                    # running backwards, so it is clamped forward.
+                    if seen <= prev_changed:
+                        seen = prev_changed + 1
+
+                cur.execute(
+                    self.sql(
+                        "INSERT INTO plug_states (device_id, socket, changed_at, "
+                        "last_seen, sump_code, role, on_state, online, power_w) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    ),
+                    (
+                        row["device_id"],
+                        row["socket"],
+                        seen,
+                        seen,
+                        row.get("sump_code"),
+                        row.get("role"),
+                        row.get("on_state"),
+                        row.get("online"),
+                        row.get("power_w"),
+                    ),
+                )
+                changes += 1
+        return changes
+
+    def insert_ambient(self, rows: Iterable[dict[str, Any]]) -> int:
+        rows = list(rows)
+        if not rows:
+            return 0
+        columns = ("device_id", "reading_time", "air_temperature", "humidity",
+                   "battery", "online")
+        cols = ", ".join(columns)
+        marks = ", ".join("?" for _ in columns)
+        inserted = 0
+        with self.cursor() as cur:
+            for row in rows:
+                if row.get("air_temperature") is None and row.get("humidity") is None:
+                    continue
+                cur.execute(
+                    self.sql(
+                        "SELECT 1 FROM ambient WHERE device_id = ? AND reading_time = ?"
+                    ),
+                    (row["device_id"], int(row["reading_time"])),
+                )
+                if cur.fetchone() is not None:
+                    continue
+                cur.execute(
+                    self.sql(f"INSERT INTO ambient ({cols}) VALUES ({marks})"),
+                    tuple(row.get(c) for c in columns),
+                )
+                inserted += 1
+        return inserted
+
+    def replace_table(self, table: str, columns: tuple, records) -> int:
+        """Replace a sheet-backed table wholesale.
+
+        The sheet is the record of truth for issues and planned jobs: a row
+        deleted there should disappear here too, which an upsert would not do.
+        The replace runs inside one transaction, so a failure part way through
+        leaves the previous contents intact rather than an empty table.
+        """
+        records = list(records)
+        if table not in {"issues", "schedule"}:
+            raise ValueError(f"replace_table refuses to touch {table}")
+        cols = ", ".join(columns)
+        marks = ", ".join("?" for _ in columns)
+        with self.cursor() as cur:
+            cur.execute(f"DELETE FROM {table}")
+            for record in records:
+                cur.execute(
+                    self.sql(f"INSERT INTO {table} ({cols}) VALUES ({marks})"),
+                    tuple(record.get(c) for c in columns),
+                )
+        return len(records)
+
     def start_run(self, started_at: int) -> None:
         self._run_started = started_at
 
@@ -369,3 +569,13 @@ class Store:
             cur.execute(self.sql(statement), tuple(params))
             columns = [d[0] for d in cur.description]
             return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Compare two nullable flags without NULL swallowing the comparison."""
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        return int(a) == int(b)
+    except (TypeError, ValueError):
+        return a == b

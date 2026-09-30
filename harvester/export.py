@@ -243,8 +243,208 @@ def build_payload(
             "by_device": _slides(devices, latest, config, now),
         },
         "nutrients": nutrients,
+        "plugs": _plugs(store, config, now),
+        "ambient": _ambient(store, config, now, window_days, raw_days),
         "last_run": last_run[0] if last_run else None,
     }
+
+
+AMBIENT_PARAMETERS = (
+    ("air_temperature", "Air temperature", "°C", 1),
+    ("humidity", "Relative humidity", "%", 0),
+)
+
+
+def _plugs(store, config: dict[str, Any], now: int, history_days: int = 14) -> dict[str, Any]:
+    """Chiller plug state per sump, read-only.
+
+    The dashboard never switches anything. It is a static page on a public
+    website, so it can hold no credential, and a button on it would be a button
+    anyone could press. What it can usefully say is which chiller is on, since
+    when, and whether the plug has stopped answering: "SC34 is 21.5 degrees and
+    its chiller went off at 14:00" is a sentence that needs no ability to
+    switch anything to be worth reading.
+    """
+    cfg = config.get("plugs") or {}
+    if not cfg.get("enabled", False):
+        return {"enabled": False}
+
+    stale_after = int(float(cfg.get("stale_minutes", 90) or 90) * 60)
+
+    try:
+        rows = store.query(
+            "SELECT device_id, socket, changed_at, last_seen, sump_code, role, "
+            "on_state, online, power_w FROM plug_states ORDER BY changed_at"
+        )
+    except Exception:  # table not created yet on an older database
+        return {"enabled": True, "by_sump": {}, "sockets": [], "history": []}
+
+    # The current row for each socket is its most recent transition. Its
+    # changed_at is therefore also the answer to "since when", which is why
+    # the table is written as transitions in the first place.
+    current: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        current[(r["device_id"], r["socket"])] = r
+
+    labels = {}
+    for did, dcfg in (cfg.get("devices") or {}).items():
+        if did.startswith("_"):
+            continue
+        for code, scfg in (dcfg.get("sockets") or {}).items():
+            if code.startswith("_"):
+                continue
+            labels[(did, code)] = {
+                "label": scfg.get("label") or dcfg.get("label"),
+                "role": scfg.get("role") or dcfg.get("role"),
+                "sump": scfg.get("sump"),
+            }
+
+    sockets = []
+    by_sump: dict[str, Any] = {}
+    for (did, code), r in sorted(current.items()):
+        meta = labels.get((did, code), {})
+        sump = r.get("sump_code") or meta.get("sump")
+        seen = _as_int(r.get("last_seen")) or _as_int(r.get("changed_at"))
+        entry = {
+            "device_id": did,
+            "socket": code,
+            "sump": sump,
+            "role": r.get("role") or meta.get("role"),
+            "label": meta.get("label"),
+            "on": _as_int(r.get("on_state")),
+            "online": _as_int(r.get("online")),
+            "since": _as_int(r.get("changed_at")),
+            "last_seen": seen,
+            "power_w": _round(r.get("power_w")),
+            # A plug the cloud has not heard from is not a plug that is off.
+            # Saying so is the difference between a useful reading and a lie.
+            "stale": bool(seen is not None and now - seen > stale_after),
+        }
+        sockets.append(entry)
+        if sump:
+            by_sump.setdefault(sump, []).append(entry)
+
+    cutoff = now - history_days * DAY
+    history = [
+        {
+            "sump": r.get("sump_code"),
+            "device_id": r["device_id"],
+            "socket": r["socket"],
+            "t": int(r["changed_at"]),
+            "on": _as_int(r.get("on_state")),
+            "online": _as_int(r.get("online")),
+        }
+        for r in rows
+        if int(r["changed_at"]) >= cutoff
+    ]
+
+    # Tuya put cloud access behind a subscription that has to be renewed. When
+    # it lapses their API simply stops answering, and a chiller column that
+    # quietly froze in October would be worse than no column at all, so the
+    # expiry travels with the data and the dashboard says so before it bites.
+    expires = _parse_day(cfg.get("subscription_expires"))
+
+    return {
+        "enabled": True,
+        "stale_after": stale_after,
+        "note": cfg.get("note"),
+        "subscription_expires": expires,
+        "subscription_warn_days": int(cfg.get("subscription_warn_days", 14) or 14),
+        "sockets": sockets,
+        "by_sump": by_sump,
+        "history": history,
+        "history_days": history_days,
+    }
+
+
+def _ambient(store, config: dict[str, Any], now: int, window_days: int,
+             raw_days: int) -> dict[str, Any]:
+    """Air temperature and humidity inside the nursery.
+
+    Not water, and deliberately kept out of the sump table: the air is context
+    for what the water is doing, not another sump to check.
+    """
+    cfg = config.get("plugs") or {}
+    devices_cfg = {k: v for k, v in (cfg.get("devices") or {}).items()
+                   if not k.startswith("_")
+                   and str(v.get("kind", "")).lower() == "ambient"}
+    if not devices_cfg:
+        return {"enabled": False}
+
+    try:
+        rows = store.query(
+            "SELECT * FROM ambient WHERE reading_time >= ? ORDER BY reading_time",
+            (now - window_days * DAY,),
+        )
+    except Exception:
+        return {"enabled": False}
+
+    keys = [k for k, _, _, _ in AMBIENT_PARAMETERS
+            if any(r.get(k) is not None for r in rows)]
+    if not keys:
+        return {"enabled": False}
+
+    reference = cfg.get("reference") or {}
+    parameters = [
+        {
+            "key": k,
+            "label": label,
+            "unit": unit,
+            "precision": precision,
+            "band": (reference.get(k) or {}).get("band"),
+        }
+        for k, label, unit, precision in AMBIENT_PARAMETERS
+        if k in keys
+    ]
+
+    latest: dict[str, Any] = {}
+    for r in rows:
+        did = r["device_id"]
+        prev = latest.get(did)
+        if prev is None or int(r["reading_time"]) > prev["t"]:
+            latest[did] = {
+                "t": int(r["reading_time"]),
+                "values": {k: _round(r.get(k)) for k in keys},
+                "battery": _round(r.get("battery")),
+                "online": _as_int(r.get("online")),
+            }
+
+    raw_cutoff = now - raw_days * DAY
+    readings = [
+        [r["device_id"], int(r["reading_time"])] + [_round(r.get(k)) for k in keys]
+        for r in rows
+        if int(r["reading_time"]) >= raw_cutoff
+    ]
+
+    devices = [
+        {
+            "device_id": did,
+            "label": dcfg.get("label") or "Nursery air",
+            "location": dcfg.get("location"),
+        }
+        for did, dcfg in devices_cfg.items()
+    ]
+
+    return {
+        "enabled": True,
+        "devices": devices,
+        "parameters": parameters,
+        "columns": ["device_id", "t"] + keys,
+        "latest": latest,
+        "readings": readings,
+        "daily": _daily_stats(
+            [dict(r, device_id=r["device_id"]) for r in rows], keys
+        ),
+    }
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _nutrients(store, config: dict[str, Any] | None = None) -> dict[str, Any]:
