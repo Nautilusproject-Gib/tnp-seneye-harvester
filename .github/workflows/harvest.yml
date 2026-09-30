@@ -50,6 +50,11 @@ jobs:
         env:
           SENEYE_USER: ${{ secrets.SENEYE_USER }}
           SENEYE_PWD: ${{ secrets.SENEYE_PWD }}
+          # Read-only Tuya access, for the chiller plugs and the air sensor.
+          # Absent secrets are an empty string, which the harvester reports and
+          # steps over rather than failing the run.
+          TUYA_ACCESS_ID: ${{ secrets.TUYA_ACCESS_ID }}
+          TUYA_ACCESS_SECRET: ${{ secrets.TUYA_ACCESS_SECRET }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m harvester.harvest
 
