@@ -1027,12 +1027,25 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
     var hot = tempStatus.kind === "critical" ||
       (tempStatus.kind === "out-band" && tempAboveBand(device.device_id));
     var kind, words;
-    if (p.stale || p.online === 0) {
+    if (p.online === 0 || p.stale) {
+      // The plug is off the network. Its relay holds whatever position it was
+      // last left in, so the state below is the last one observed rather than
+      // the state now, and saying otherwise would be a guess dressed as a
+      // reading.
       kind = "stale";
-      words = "the plug has stopped reporting, so its state is unknown";
+      words = "the plug is off the network. Last seen "
+        + (p.on === 1 ? "on" : p.on === 0 ? "off" : "in an unknown state")
+        + ", and it will have held that position unless the power was cut";
     } else if (p.on === 1) {
       kind = "on";
       words = "running";
+    } else if (p.on === 1 && p.power_w !== null && p.power_w !== undefined
+               && p.power_w < 5) {
+      // Switched on and drawing nothing. The relay closed and the compressor
+      // did not, which the on/off state alone would report as perfectly
+      // healthy right up until the sump cooked.
+      kind = "concern";
+      words = "switched on but drawing no power, so the chiller itself is not running";
     } else if (p.on === 0 && hot) {
       kind = "concern";
       words = "off while the sump is above its working range";
@@ -1080,11 +1093,17 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
       : st.kind === "stale" ? "\u00b7" : "\u25cb";
     wrap.appendChild(mk);
     wrap.appendChild(document.createTextNode(
-      st.kind === "stale" ? "?" : st.plug.on === 1 ? "on" : "off"));
+      st.plug.on === 1 ? "on" : st.plug.on === 0 ? "off" : "?"));
+    if (st.kind === "stale") {
+      var q = document.createElement("span");
+      q.className = "since";
+      q.textContent = "offline";
+      wrap.appendChild(q);
+    }
 
     // "off since 14:05" is the sentence worth reading. A change older than a
     // day gets the date too, or "since 09:40" would quietly mean last Tuesday.
-    if (st.since && st.kind !== "stale") {
+    if (st.since && st.kind !== "stale") {  // an offline plug shows "offline" instead
       var since = document.createElement("span");
       since.className = "since";
       var age = today() - st.since;
@@ -1095,11 +1114,23 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
 
     var bits = [(device.sump || device.device_id) + " " + (st.plug.role || "plug") +
                 ": " + st.words];
-    if (st.since) bits.push("since " + fmtTime(st.since, true));
-    if (st.plug.power_w !== null && st.plug.power_w !== undefined) {
-      bits.push("drawing " + fmt(st.plug.power_w, 1) + " W");
+    if (st.since && st.kind !== "stale") bits.push("since " + fmtTime(st.since, true));
+    // Power is only worth quoting when it belongs to this chiller and is
+    // current. On an offline plug the meter is as old as the state, and on a
+    // socket that is switched off the plug's total belongs to its neighbour.
+    if (st.kind !== "stale" && st.plug.on === 1) {
+      if (st.plug.power_w !== null && st.plug.power_w !== undefined) {
+        bits.push("drawing " + fmt(st.plug.power_w, 0) + " W");
+      } else if (st.plug.plug_power_w) {
+        bits.push("sharing a plug with the other chiller on this row, " +
+                  fmt(st.plug.plug_power_w, 0) + " W between the two");
+      }
     }
-    if (st.plug.last_seen) bits.push("plug last heard from " + fmtTime(st.plug.last_seen, true));
+    if (st.plug.last_seen) {
+      bits.push((st.kind === "stale" ? "plug last on the network "
+                                     : "plug last heard from ") +
+                fmtTime(st.plug.last_seen, true));
+    }
     bits.push("switched from the Smart Life app, not from this page");
     td.title = bits.join("; ");
     return td;
@@ -1265,7 +1296,7 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
     table.appendChild(head);
 
     var body = document.createElement("tbody");
-    var worst = "in-band", trouble = [];
+    var worst = "in-band", trouble = [], plugsQuiet = [], plugsMapped = 0;
     var system = null;
 
     devices.forEach(function (d) {
@@ -1333,6 +1364,7 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
       });
 
       var plug = showPlugs ? plugStateFor(d) : null;
+      if (plug) plugsMapped++;
       if (showPlugs) tr.appendChild(plugCell(d));
 
       var slide = slideFor(d.device_id);
@@ -1377,12 +1409,14 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
       // own cannot tell you.
       if (plug && plug.kind === "concern") {
         if (STATUS_RANK["out-band"] > STATUS_RANK[worst]) worst = "out-band";
-        trouble.push({ sump: name, kind: "out-band",
-                       text: name + " is above its working range with the chiller off" });
+        trouble.push({ sump: name, kind: "out-band", text: name + " " + plug.words });
       } else if (plug && plug.kind === "stale") {
-        if (STATUS_RANK.offline > STATUS_RANK[worst]) worst = "offline";
-        trouble.push({ sump: name, kind: "offline",
-                       text: name + "'s chiller plug has stopped reporting" });
+        // Held back rather than pushed straight into the list. Every plug
+        // going quiet at once is one broken link to Tuya, not nine broken
+        // chillers, and nine near-identical lines would bury whatever else
+        // the banner had to say. Same reasoning as five silent parameters
+        // counting as one silent sensor.
+        plugsQuiet.push(name);
       }
 
       if (slide && slide.days <= 0) {
@@ -1404,6 +1438,22 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
       body.appendChild(tr);
     });
     table.appendChild(body);
+
+    if (plugsQuiet.length) {
+      if (STATUS_RANK.offline > STATUS_RANK[worst]) worst = "offline";
+      // All of them quiet is a reading problem, and the wording says so: the
+      // chillers themselves are very likely fine, and telling a student nine
+      // chillers have failed when the truth is one API has stopped answering
+      // would send them running to the nursery for nothing.
+      trouble.push(plugsMapped > 1 && plugsQuiet.length === plugsMapped
+        ? { sump: "plugs", kind: "offline",
+            text: "no chiller plug is on the network, so none of their states " +
+                  "can be confirmed (the chillers themselves may be running)" }
+        : { sump: plugsQuiet[0], kind: "offline",
+            text: plugsQuiet.join(", ") +
+                  (plugsQuiet.length === 1 ? "'s chiller plug has" :
+                   " chiller plugs have") + " stopped reporting" });
+    }
 
     renderAir();
     renderOverviewBanner(worst, trouble, devices.length);
