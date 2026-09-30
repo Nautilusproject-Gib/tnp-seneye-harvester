@@ -478,11 +478,30 @@ since when, and whether the plug has stopped answering. "SC34 is 21.5 °C and
 its chiller went off at 14:00" is a sentence worth reading, and it needs no
 ability to switch anything.
 
-A chiller being off is not reported as a fault, because they cycle. Two things
-are: a chiller off while its own sump is above the working range, and a plug
-that has not been heard from for longer than `stale_minutes`. The second
-matters because a plug that has gone quiet looks exactly like a plug that has
-not changed.
+A chiller being off is not reported as a fault, because they cycle. Three
+things are: a chiller off while its own sump is above the working range, a
+chiller switched on but drawing no power, and a plug that has dropped off the
+network.
+
+The middle one is only visible because these plugs meter. A relay that closes
+while the compressor does not start reports a perfectly healthy "on", and the
+switch state alone would show nothing wrong until the sump cooked. Where a
+plug has one socket drawing, the wattage is that chiller's; where both are on
+it belongs to the pair and is reported as such rather than halved.
+
+Online and stale are kept apart. A plug Tuya can still reach was in contact at
+the moment we polled. One that has dropped off the network was last in contact
+whenever its record says, and its relay is still holding whatever position it
+was left in, so the dashboard reports the last observed state and says plainly
+that it cannot confirm it. Reading Tuya's `update_time` as a heartbeat was an
+early mistake here: on a sensor it is the last measurement, but on a switch it
+is the last time the device record changed, so a chiller nobody had touched
+for a fortnight looked a fortnight dead.
+
+When every plug goes quiet at once the banner says so once, as one reading
+fault, rather than naming nine sumps. Nine near-identical lines would bury
+whatever else needed saying, and telling a student that nine chillers have
+failed when one API has stopped answering sends them running for nothing.
 
 ### Setting it up
 
