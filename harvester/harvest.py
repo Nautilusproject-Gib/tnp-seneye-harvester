@@ -151,6 +151,34 @@ def main(argv: list[str] | None = None) -> int:
                     + (f", {summary['offline']} device(s) not answering"
                        if summary.get("offline") else "")
                 )
+                # A device that has been factory reset is gone from the
+                # account, not merely unreachable, and nothing else would ever
+                # say so: the readings just stop. This is the one plug failure
+                # worth shouting about, because it needs a decision rather than
+                # a walk to the nursery.
+                for did in summary.get("gone", []):
+                    print(
+                        f"plugs: WARNING device {did} is configured but is no "
+                        "longer on the Tuya account. A factory reset gives a "
+                        "device a new ID, and rejoining it to a different "
+                        "Wi-Fi network does exactly that.",
+                        file=sys.stderr,
+                    )
+                if summary.get("gone") and summary.get("candidates"):
+                    print("plugs: devices on the account that config.json does "
+                          "not know about, one of which is probably it:",
+                          file=sys.stderr)
+                    for d in summary["candidates"]:
+                        print(f"    {d['id']}  {d.get('name') or '(no name)'}  "
+                              f"[{d.get('product_name') or 'unknown'}]",
+                              file=sys.stderr)
+                    print("plugs: fix it with Actions -> Replace a device ID, "
+                          "which keeps the old readings on the same chart.",
+                          file=sys.stderr)
+                for did in summary.get("unchecked", []):
+                    print(f"plugs: {did} returned nothing, and the account "
+                          "listing could not be read to say why", file=sys.stderr)
+
                 days = summary.get("subscription_days")
                 if days is not None and days <= 30:
                     print(

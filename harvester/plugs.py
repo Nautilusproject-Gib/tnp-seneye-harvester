@@ -327,6 +327,44 @@ class TuyaClient:
             }
         return out
 
+    def all_devices(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Every device the linked app account can see.
+
+        Needed because a Tuya device that is factory reset comes back with a
+        brand new device ID. Re-joining a plug or sensor to a different Wi-Fi
+        network is enough to do it, at which point the ID written in
+        config.json refers to something that no longer exists and the harvester
+        is politely asking about a ghost. This lists what is actually there so
+        the new ID can be read off rather than hunted for.
+        """
+        found: list[dict[str, Any]] = []
+        cursor = ""
+        while len(found) < limit:
+            params = {"page_size": "100"}
+            if cursor:
+                params["last_row_key"] = cursor
+            result = self._call(
+                "GET", "/v1.0/iot-01/associated-users/devices", params
+            ) or {}
+            batch = result.get("devices") or []
+            if not batch:
+                break
+            for d in batch:
+                found.append({
+                    "id": str(d.get("id")),
+                    "name": d.get("name"),
+                    "product_name": d.get("product_name"),
+                    "online": bool(d.get("online")),
+                    "update_time": _as_int(d.get("update_time")),
+                    "active_time": _as_int(d.get("active_time")),
+                })
+            if not result.get("has_more"):
+                break
+            cursor = result.get("last_row_key") or ""
+            if not cursor:
+                break
+        return found
+
 
 # -- polling -------------------------------------------------------------------
 
@@ -474,13 +512,58 @@ def load(store, config: dict[str, Any], env: dict[str, str] | None = None) -> di
     result = poll(client, config)
     sockets = store.insert_plug_states(s.as_row() for s in result.sockets)
     ambient = store.insert_ambient(a.as_row() for a in result.ambient)
-    return {
+    summary = {
         "sockets": sockets,
         "ambient": ambient,
         "polled": len(result.sockets) + len(result.ambient),
         "offline": len(result.offline),
         "subscription_days": subscription_days(cfg),
     }
+    summary.update(reconcile(client, config, result))
+    return summary
+
+
+def reconcile(client: TuyaClient, config: dict[str, Any],
+              result: "Poll") -> dict[str, Any]:
+    """Work out whether a silent device is unreachable or simply gone.
+
+    A factory reset gives a Tuya device a new ID, and rejoining one to a
+    different Wi-Fi network is enough to cause it. The old ID then refers to
+    nothing, the harvester asks about a device that does not exist, and the
+    readings stop with no error anywhere. That is the worst kind of failure:
+    everything claims to be fine.
+
+    The two cases are easy to tell apart once you look. A plug that is merely
+    off the network is still registered and still answers with its last known
+    data points, as Rows C and E do. A device that has been reset returns
+    nothing AND is absent from the account's own device list. Only the second
+    needs a new ID written down.
+
+    The account listing costs an extra request, so it is only fetched when
+    something has actually gone quiet.
+    """
+    if not result.offline:
+        return {"gone": [], "candidates": []}
+
+    cfg = config.get("plugs") or {}
+    configured: set[str] = set()
+    for did, dcfg in (cfg.get("devices") or {}).items():
+        if did.startswith("_"):
+            continue
+        configured.add(did)
+        configured.update(str(x) for x in (dcfg.get("previous_ids") or []))
+
+    try:
+        account = client.all_devices()
+    except TuyaError:
+        # Not knowing is not the same as nothing being wrong, so the silent
+        # devices are still reported, just without the diagnosis.
+        return {"gone": [], "candidates": [], "unchecked": list(result.offline)}
+
+    present = {d["id"] for d in account}
+    gone = [did for did in result.offline if did not in present]
+    candidates = [d for d in account if d["id"] not in configured]
+    return {"gone": gone, "candidates": candidates}
 
 
 def subscription_days(cfg: dict[str, Any], now: float | None = None) -> int | None:
@@ -501,6 +584,53 @@ def subscription_days(cfg: dict[str, Any], now: float | None = None) -> int | No
         return None
     expires = day.replace(tzinfo=datetime.timezone.utc).timestamp()
     return int((expires - (now if now is not None else time.time())) // 86400)
+
+
+def inventory(client: TuyaClient, config: dict[str, Any]) -> str:
+    """Every device on the account, flagged against what config.json expects.
+
+    The two lines worth reading are "not in config.json", which is where a
+    reset device's new ID turns up, and "configured but not on the account",
+    which is the old ID it replaced.
+    """
+    cfg = config.get("plugs") or {}
+    known: dict[str, str] = {}
+    for did, dcfg in (cfg.get("devices") or {}).items():
+        if did.startswith("_"):
+            continue
+        known[did] = dcfg.get("label") or did
+        for old in dcfg.get("previous_ids") or []:
+            known[str(old)] = (dcfg.get("label") or did) + " (previous ID)"
+
+    devices = client.all_devices()
+    lines = [f"{len(devices)} device(s) on the account", ""]
+    unknown = []
+    for d in sorted(devices, key=lambda x: (x.get("name") or "").lower()):
+        mark = "  " if d["id"] in known else "NEW"
+        note = known.get(d["id"], "not in config.json")
+        when = ("  last update " + time.strftime(
+            "%Y-%m-%d %H:%M UTC", time.gmtime(d["update_time"]))
+            if d.get("update_time") else "")
+        lines.append(f"{mark} {d['id']}  {d.get('name') or '(no name)'}")
+        lines.append(f"      {d.get('product_name') or 'unknown product'}, "
+                     f"{'online' if d['online'] else 'OFFLINE'}{when}")
+        lines.append(f"      {note}")
+        if d["id"] not in known:
+            unknown.append(d)
+
+    missing = [k for k in known if k not in {d["id"] for d in devices}]
+    if missing:
+        lines.append("")
+        lines.append("Configured but NOT on the account any more:")
+        for k in missing:
+            lines.append(f"  {k}  {known[k]}")
+        lines.append("")
+        lines.append("A device that was factory reset comes back with a new ID, "
+                     "so one of the NEW entries above is almost certainly the "
+                     "same piece of hardware. Put the new ID in config.json and "
+                     "move the old one into that device's 'previous_ids' list, "
+                     "which keeps its history on the same chart.")
+    return "\n".join(lines)
 
 
 def describe(client: TuyaClient, device_ids: Iterable[str]) -> str:
