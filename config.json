@@ -194,7 +194,7 @@
     "enabled": true,
     "region": "eu",
     "stale_minutes": 90,
-    "subscription_expires": "2026-10-31",
+    "subscription_expires": "2027-04-30",
     "subscription_warn_days": 14,
     "note": "Chiller state is read from the plugs every harvest. It is shown here and switched from the Smart Life app.",
     "reference": {
