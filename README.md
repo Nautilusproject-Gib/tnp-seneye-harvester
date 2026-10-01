@@ -538,8 +538,18 @@ how to check the air sensor's scaling. Tuya send scaled integers, so 213 means
 ### Why the air reading is often "old"
 
 The sensor does not report on a timer. It sends a reading when a value moves
-past a threshold its firmware decides, so a steady room produces nothing for an
-hour or two and the last reading being old is not a fault. The plugs are the
+past a threshold its firmware decides, so a steady room produces nothing new
+for an hour or two and the last change being old is not a fault.
+
+Two timestamps are kept apart, because collapsing them was a mistake worth
+documenting. `reading_time` is when the harvester took the reading, and there
+is one every half hour: the air was that temperature when we asked, whether or
+not the number had moved. `reported_at` is when Tuya last saw a value change.
+Keying the stored reading on the second deduplicated almost everything away, so
+a fortnight of monitoring produced two stored readings and the chart had
+nothing to draw. A reading is not stored when the sensor is offline, because
+writing its last value every half hour would manufacture a flat line out of
+nothing. The plugs are the
 opposite: they answer every poll, which is why `stale_minutes` is 90 for them
 and `ambient_stale_hours` is 6 for the sensor. Sharing one threshold made a
 healthy sensor look dead every time the nursery held still.
@@ -551,7 +561,10 @@ the last two are greyed.
 
 To see what normal looks like for this particular sensor, run Actions → **Air
 sensor reporting rate**. It reads the stored readings and gives the median gap,
-the distribution, and the longest silences. One limit it states itself: the
+the distribution, and the longest silences. It counts the sensor's own reports,
+not the harvester's polls: "48 readings stored, 3 distinct reports" is the
+shape of the answer, and quoting the first number alone would only describe how
+often the harvester runs. One limit it states itself: the
 harvester polls every thirty minutes, so it cannot see a sensor reporting more
 often than that, and gaps at or below the harvest interval are a floor on the
 true rate rather than a measurement of it. Gaps longer than thirty minutes are
