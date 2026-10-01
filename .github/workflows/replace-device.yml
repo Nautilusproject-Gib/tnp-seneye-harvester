@@ -1,0 +1,86 @@
+name: Replace a device ID
+
+# Points a configured plug or sensor at a new Tuya device ID and commits the
+# change, so nobody has to edit config.json by hand.
+#
+# Needed because a Tuya device that is factory reset comes back with a brand
+# new ID, and rejoining one to a different Wi-Fi network is enough to do it.
+# The old ID then refers to nothing and the readings stop with no error.
+#
+#   1. Find the new ID. Either Actions -> Probe smart plugs with "list every
+#      device" ticked, or iot.tuya.com -> Cloud -> Development -> your project
+#      -> Devices.
+#   2. Actions -> Replace a device ID -> Run workflow. Paste the old and new
+#      IDs. Leave "dry run" ticked the first time and read the log.
+#   3. Run it again with "dry run" unticked.
+#
+# The old ID is recorded under the device's `previous_ids`, which keeps its
+# readings from before the reset on the same chart rather than starting the
+# record again from the day it happened.
+
+on:
+  workflow_dispatch:
+    inputs:
+      old_id:
+        description: "The device ID currently in config.json"
+        required: true
+      new_id:
+        description: "The device ID it has now"
+        required: true
+      check:
+        description: "Ask Tuya to confirm the new ID exists before writing"
+        required: true
+        default: true
+        type: boolean
+      dry_run:
+        description: "Dry run — report only, change nothing"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  # Shares a group with the harvest so a config rewrite and a harvest never
+  # land on the same commit.
+  group: harvest
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  replace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Swap the ID
+        env:
+          TUYA_ACCESS_ID: ${{ secrets.TUYA_ACCESS_ID }}
+          TUYA_ACCESS_SECRET: ${{ secrets.TUYA_ACCESS_SECRET }}
+        run: |
+          python tools/swap_device.py \
+            --old "${{ inputs.old_id }}" \
+            --new "${{ inputs.new_id }}" \
+            ${{ inputs.check && '--check' || '' }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Commit
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "tnp-harvester"
+          git config user.email "actions@users.noreply.github.com"
+          git add config.json
+          git diff --quiet --cached && echo "config.json unchanged" && exit 0
+          git commit -m "plugs: ${{ inputs.old_id }} -> ${{ inputs.new_id }}"
+          git pull --rebase --autostash origin ${GITHUB_REF_NAME} || true
+          git push
+
+      - name: What happens next
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "The next harvest will poll the new ID. Run it now from"
+          echo "Actions -> Harvest nursery readings rather than waiting."
