@@ -535,6 +535,31 @@ how to check the air sensor's scaling. Tuya send scaled integers, so 213 means
 21.3 °C; if humidity comes back as 655 rather than 65, set its scale to 10 in
 `config.json > plugs > devices > <id> > scales`.
 
+### Why the air reading is often "old"
+
+The sensor does not report on a timer. It sends a reading when a value moves
+past a threshold its firmware decides, so a steady room produces nothing for an
+hour or two and the last reading being old is not a fault. The plugs are the
+opposite: they answer every poll, which is why `stale_minutes` is 90 for them
+and `ambient_stale_hours` is 6 for the sensor. Sharing one threshold made a
+healthy sensor look dead every time the nursery held still.
+
+The chip says which of the three it is: a time on its own for a recent reading,
+"unchanged since" once it is over an hour old, "last reported" past the
+threshold, and "offline since" when Tuya cannot reach the device at all. Only
+the last two are greyed.
+
+To see what normal looks like for this particular sensor, run Actions → **Air
+sensor reporting rate**. It reads the stored readings and gives the median gap,
+the distribution, and the longest silences. One limit it states itself: the
+harvester polls every thirty minutes, so it cannot see a sensor reporting more
+often than that, and gaps at or below the harvest interval are a floor on the
+true rate rather than a measurement of it. Gaps longer than thirty minutes are
+real. A median of an hour or two with no long silences is a sensor reporting on
+change in a stable room. Occasional gaps of many hours mixed with short ones
+usually mean it dropped off the network rather than that the air stopped
+moving.
+
 ### When a device is reset
 
 A Tuya device that is factory reset comes back with a brand new device ID, and
