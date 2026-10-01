@@ -1007,16 +1007,23 @@ class TestPlugPolling(unittest.TestCase):
                             PLUG_CONFIG, now=1000)
         self.assertTrue(all(s.reading_time == 1000 for s in result.sockets))
 
-    def test_a_sensor_keeps_its_own_measurement_time(self):
+    def test_a_poll_is_a_reading_and_the_report_time_is_kept_beside_it(self):
+        # Keying the stored reading on the sensor's update_time meant every
+        # poll that found the same value carried the same timestamp, the
+        # insert deduplicated it away, and a fortnight of monitoring produced
+        # two stored readings. The air was measured every half hour and almost
+        # all of it was thrown out.
         result = plugs.poll(FakeTuya(plug_codes(), update_time=940),
                             PLUG_CONFIG, now=1000)
-        self.assertEqual(result.ambient[0].reading_time, 940)
+        self.assertEqual(result.ambient[0].reading_time, 1000)
+        self.assertEqual(result.ambient[0].reported_at, 940)
 
-    def test_a_sensor_silent_for_over_a_week_falls_back_to_the_clock(self):
+    def test_a_long_silent_sensor_still_gets_a_current_reading_time(self):
         old = 1000 - 9 * 86400
         result = plugs.poll(FakeTuya(plug_codes(), update_time=old),
                             PLUG_CONFIG, now=1000)
         self.assertEqual(result.ambient[0].reading_time, 1000)
+        self.assertEqual(result.ambient[0].reported_at, old)
 
     def test_a_device_that_returns_no_data_points_is_marked_offline(self):
         codes = plug_codes()
@@ -1032,6 +1039,7 @@ class TestPlugPolling(unittest.TestCase):
         result = plugs.poll(FakeTuya(plug_codes(), update_time=2 ** 31),
                             PLUG_CONFIG, now=1000)
         self.assertEqual(result.ambient[0].reading_time, 1000)
+        self.assertEqual(result.ambient[0].reported_at, 1000)
 
     def test_nothing_is_polled_when_no_devices_are_configured(self):
         result = plugs.poll(FakeTuya({}), {"plugs": {"enabled": True}}, now=1000)
@@ -1202,7 +1210,7 @@ class TestSensorCadence(unittest.TestCase):
     """Reading the sensor's own reporting rate out of the stored readings."""
 
     def report(self, times, harvest=30, recent=0):
-        rows = [{"reading_time": t} for t in times]
+        rows = [{"reading_time": t, "reported_at": t} for t in times]
         return "\n".join(
             sensor_cadence.report(rows, "sensor", "UTC", harvest, recent))
 
@@ -1230,8 +1238,20 @@ class TestSensorCadence(unittest.TestCase):
         text = self.report([1000, 1000, 2800, 4600])
         self.assertIn("median gap 30 min", text)
 
-    def test_readings_that_all_share_one_timestamp_are_reported_honestly(self):
-        self.assertIn("same timestamp", self.report([1000, 1000, 1000]))
+    def test_stored_readings_and_sensor_reports_are_counted_separately(self):
+        # 48 polls of a sensor that moved three times is 48 readings and 3
+        # reports, and saying "48" would answer the wrong question: it would
+        # only describe how often the harvester runs.
+        rows = [{"reading_time": 1000 + i * 1800,
+                 "reported_at": 1000 + (i // 16) * 28800} for i in range(48)]
+        text = "\n".join(sensor_cadence.report(rows, "sensor", "UTC", 30, 0))
+        self.assertIn("48 reading(s) stored, 3 distinct report(s)", text)
+
+    def test_a_sensor_that_never_moved_says_so_rather_than_inventing_a_rate(self):
+        rows = [{"reading_time": 1000 + i * 1800, "reported_at": 900}
+                for i in range(20)]
+        text = "\n".join(sensor_cadence.report(rows, "sensor", "UTC", 30, 0))
+        self.assertIn("not enough yet", text)
 
     def test_human_reads_in_the_unit_that_suits_the_size(self):
         self.assertEqual(sensor_cadence.human(45), "45 s")
