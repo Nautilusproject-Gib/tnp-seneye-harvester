@@ -1,0 +1,53 @@
+name: Air sensor reporting rate
+
+# Answers "how often does the air sensor actually send a reading?" from the
+# readings already stored, so a two-hour-old value can be judged against what
+# normal looks like for this particular sensor.
+#
+# Tuya temperature and humidity sensors report when a value moves rather than
+# on a timer, so a steady room produces long silences that are not faults. The
+# only way to tell a quiet sensor from a dead one is to know its usual rate.
+#
+# Reads only. Writes nothing and changes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days of history to look at"
+        required: true
+        default: "14"
+      recent:
+        description: "Also list this many of the most recent report times (0 for none)"
+        required: false
+        default: "0"
+      harvest_minutes:
+        description: "How often the harvester runs, which floors what can be seen"
+        required: false
+        default: "30"
+
+permissions:
+  contents: read
+
+jobs:
+  cadence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install optional database driver
+        if: vars.DB_DRIVER != ''
+        run: pip install ${{ vars.DB_DRIVER }}
+
+      - name: Report
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python tools/sensor_cadence.py \
+            --days "${{ inputs.days }}" \
+            --recent "${{ inputs.recent }}" \
+            --harvest-minutes "${{ inputs.harvest_minutes }}"
