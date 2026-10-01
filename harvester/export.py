@@ -373,6 +373,17 @@ def _ambient(store, config: dict[str, Any], now: int, window_days: int,
     if not devices_cfg:
         return {"enabled": False}
 
+    # A Tuya device that is factory reset comes back with a new device ID, and
+    # joining it to a different Wi-Fi network is enough to cause that. Its
+    # readings would then start a fresh series and the previous months would
+    # drop off the chart, as though the nursery had no air temperature before
+    # the day someone changed the router. Listing the old IDs under
+    # 'previous_ids' keeps it one sensor.
+    alias: dict[str, str] = {}
+    for did, dcfg in devices_cfg.items():
+        for old_id in dcfg.get("previous_ids") or []:
+            alias[str(old_id)] = did
+
     try:
         rows = store.query(
             "SELECT * FROM ambient WHERE reading_time >= ? ORDER BY reading_time",
@@ -380,6 +391,11 @@ def _ambient(store, config: dict[str, Any], now: int, window_days: int,
         )
     except Exception:
         return {"enabled": False}
+
+    for r in rows:
+        if r["device_id"] in alias:
+            r["device_id"] = alias[r["device_id"]]
+    rows = [r for r in rows if r["device_id"] in devices_cfg]
 
     keys = [k for k, _, _, _ in AMBIENT_PARAMETERS
             if any(r.get(k) is not None for r in rows)]
