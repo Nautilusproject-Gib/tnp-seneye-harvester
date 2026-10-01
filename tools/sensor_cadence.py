@@ -7,7 +7,9 @@ occasional heartbeat, so a steady room produces long silences that are not
 faults. That makes "the last reading is two hours old" impossible to judge
 without knowing what normal looks like for this particular sensor.
 
-This reads the stored readings and says what normal looks like.
+This reads the stored readings and says what normal looks like. It measures
+the sensor's own report times, not the harvester's: a reading is stored on
+every poll, so counting those would only tell you how often the harvester runs.
 
     python tools/sensor_cadence.py                   every ambient device
     python tools/sensor_cadence.py --days 30         over a longer window
@@ -60,16 +62,21 @@ def when(unix: int, tz: str) -> str:
 
 def report(rows: list[dict], label: str, tz: str, harvest_minutes: int,
            recent: int) -> list[str]:
-    out = [f"{label}: {len(rows)} reading(s) stored"]
-    if len(rows) < 2:
+    out = [f"{label}: {len(rows)} reading(s) stored, "
+           f"{len({int(r.get('reported_at') or r['reading_time']) for r in rows})} "
+           "distinct report(s) from the sensor"]
+    if len({int(r.get("reported_at") or r["reading_time"]) for r in rows}) < 2:
         out.append("  not enough yet to say anything about the rate")
         return out
 
-    times = sorted(int(r["reading_time"]) for r in rows)
-    gaps = [b - a for a, b in zip(times, times[1:]) if b > a]
-    if not gaps:
-        out.append("  every reading carries the same timestamp")
-        return out
+    # Measured on reported_at, not on the harvest's own clock. Every poll
+    # stores a reading now, so counting those would only ever tell you how
+    # often the harvester runs, which we already know. What is wanted is how
+    # often the sensor's values actually move. Rows written before reported_at
+    # existed fall back to their reading time.
+    stamps = sorted({int(r.get("reported_at") or r["reading_time"]) for r in rows})
+    times = stamps
+    gaps = [b - a for a, b in zip(times, times[1:])]
 
     floor = harvest_minutes * 60
     under = sum(1 for g in gaps if g <= floor + 60)
@@ -140,8 +147,8 @@ def main(argv: list[str] | None = None) -> int:
     cutoff = int(time.time()) - args.days * 86400
     try:
         rows = store.query(
-            "SELECT device_id, reading_time FROM ambient WHERE reading_time >= ? "
-            "ORDER BY reading_time", (cutoff,)
+            "SELECT device_id, reading_time, reported_at FROM ambient "
+            "WHERE reading_time >= ? ORDER BY reading_time", (cutoff,)
         )
     except Exception as exc:
         print(f"Could not read the ambient readings: {exc}", file=sys.stderr)
