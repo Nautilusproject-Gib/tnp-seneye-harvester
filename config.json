@@ -294,11 +294,14 @@
           }
         }
       },
-      "bf0dee5c3a68c22ad66baz": {
+      "bf79a8d7fbe41cc23cdpxq": {
         "label": "Nursery air",
         "kind": "ambient",
         "location": "inside the nursery",
-        "_comment": "Temperature and humidity of the air the tanks sit in, not of the water. 'scales' divides Tuya's scaled integers: their sensors report 213 for 21.3 degrees, so 10 for temperature. If the probe shows humidity as 655 rather than 65, set its scale to 10 as well.",
+        "previous_ids": [
+          "bf0dee5c3a68c22ad66baz"
+        ],
+        "_comment": "Temperature and humidity of the air the tanks sit in, not of the water. 'scales' divides Tuya's scaled integers: their sensors report 213 for 21.3 degrees, so 10 for temperature. If the probe shows humidity as 655 rather than 65, set its scale to 10 as well. 'previous_ids' holds IDs this same physical sensor used before: a Tuya device that is factory reset, which rejoining it to a different Wi-Fi network will do, comes back with a brand new ID. Listing the old one here keeps its readings on the same chart instead of starting the record again from the day the router changed. Find the new ID with the Probe smart plugs workflow, ticking 'list every device'.",
         "scales": {
           "air_temperature": 10,
           "humidity": 1
