@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harvester.export import _daily_stats, _slides, build_payload
 from harvester import plugs
-from tools import swap_device
+from tools import sensor_cadence, swap_device
 from harvester.seneye import parse_reading
 from harvester.store import Store
 
@@ -1198,6 +1198,48 @@ class TestSwapDevice(unittest.TestCase):
                 self.assertEqual(json.load(fh), payload)
 
 
+class TestSensorCadence(unittest.TestCase):
+    """Reading the sensor's own reporting rate out of the stored readings."""
+
+    def report(self, times, harvest=30, recent=0):
+        rows = [{"reading_time": t} for t in times]
+        return "\n".join(
+            sensor_cadence.report(rows, "sensor", "UTC", harvest, recent))
+
+    def test_one_reading_says_so_rather_than_inventing_a_rate(self):
+        self.assertIn("not enough yet", self.report([1000]))
+
+    def test_a_steady_half_hourly_sensor_reads_as_half_hourly(self):
+        text = self.report([1000 + i * 1800 for i in range(20)])
+        self.assertIn("median gap 30 min", text)
+
+    def test_gaps_at_the_harvest_interval_are_flagged_as_unmeasurable(self):
+        # The harvester cannot see a sensor reporting faster than it polls, so
+        # the figures are a floor on the true rate, not a measurement of it.
+        text = self.report([1000 + i * 1800 for i in range(10)], harvest=30)
+        self.assertIn("9 of 9 gaps are at or below the 30-minute", text)
+
+    def test_a_long_silence_is_surfaced_separately(self):
+        times = [1000 + i * 1800 for i in range(10)]
+        times.append(times[-1] + 30 * 3600)
+        text = self.report(times)
+        self.assertIn("longest silences", text)
+        self.assertIn("30.0 h", text)
+
+    def test_duplicate_timestamps_do_not_become_zero_length_gaps(self):
+        text = self.report([1000, 1000, 2800, 4600])
+        self.assertIn("median gap 30 min", text)
+
+    def test_readings_that_all_share_one_timestamp_are_reported_honestly(self):
+        self.assertIn("same timestamp", self.report([1000, 1000, 1000]))
+
+    def test_human_reads_in_the_unit_that_suits_the_size(self):
+        self.assertEqual(sensor_cadence.human(45), "45 s")
+        self.assertEqual(sensor_cadence.human(1800), "30 min")
+        self.assertEqual(sensor_cadence.human(9000), "2.5 h")
+        self.assertEqual(sensor_cadence.human(180000), "2.1 days")
+
+
 class TestPlugSigning(unittest.TestCase):
     def setUp(self):
         self.client = plugs.TuyaClient("id123", "secret456", region="eu")
@@ -1433,6 +1475,22 @@ class TestPlugExport(unittest.TestCase):
         ])
         ambient = build_payload(store, PLUG_CONFIG, 30, 30)["ambient"]
         self.assertEqual(list(ambient["latest"]), ["airSensor"])
+
+    def test_the_air_sensor_gets_its_own_staleness_threshold(self):
+        # A plug answers every poll, so ninety minutes of silence means
+        # trouble. The sensor reports on change, so a steady room sends
+        # nothing for hours with nothing whatever the matter. Sharing the
+        # plugs' threshold made a healthy sensor look dead.
+        payload = self.payload()
+        self.assertEqual(payload["plugs"]["stale_after"], 90 * 60)
+        self.assertEqual(payload["ambient"]["stale_after"], 6 * 3600)
+
+    def test_the_ambient_threshold_is_configurable(self):
+        config = json.loads(json.dumps(PLUG_CONFIG))
+        config["plugs"]["ambient_stale_hours"] = 2
+        self.assertEqual(
+            build_payload(self.store, config, 30, 30)["ambient"]["stale_after"],
+            7200)
 
     def test_plugs_disabled_exports_nothing_but_the_flag(self):
         payload = build_payload(self.store, {"plugs": {"enabled": False}}, 30, 30)
