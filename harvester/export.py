@@ -443,11 +443,22 @@ def _ambient(store, config: dict[str, Any], now: int, window_days: int,
         for did, dcfg in devices_cfg.items()
     ]
 
+    # A plug is polled: it answers every time, so ninety minutes of silence
+    # means something is wrong. A temperature and humidity sensor is not. It
+    # reports when a value actually moves, so a steady room produces no
+    # readings at all and the last one can be hours old with nothing whatever
+    # the matter. Judging it by the plugs' threshold made a working sensor look
+    # dead every time the nursery held still. Six hours is the default: a room
+    # that has not moved by a tenth of a degree since breakfast is worth a
+    # second look, two hours is not.
+    ambient_stale = int(float(cfg.get("ambient_stale_hours", 6) or 6) * 3600)
+
     return {
         "enabled": True,
         "devices": devices,
         "parameters": parameters,
         "columns": ["device_id", "t"] + keys,
+        "stale_after": ambient_stale,
         "latest": latest,
         "readings": readings,
         "daily": _daily_stats(
