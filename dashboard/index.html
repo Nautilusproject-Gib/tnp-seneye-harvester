@@ -1180,8 +1180,14 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
         // means trouble. This sensor reports only when a value moves, so a
         // steady room legitimately produces nothing for hours. Whether the
         // device is reachable at all is what `online` is for.
+        // Two different ages. `t` is when this reading was taken, which the
+        // harvest keeps fresh. `reported` is when the sensor last saw a value
+        // move, and a long quiet spell there is the thing worth noticing.
         var age = today() - latest.t;
-        var stale = latest.online === 0 || age > (amb.stale_after || 21600);
+        var quiet = today() - (latest.reported || latest.t);
+        var stale = latest.online === 0 ||
+          age > (amb.stale_after || 21600) ||
+          quiet > (amb.stale_after || 21600);
         var chip = document.createElement("div");
         chip.className = "air-chip" + (stale ? " off" : out ? " out" : "");
         var k = document.createElement("span");
@@ -1196,14 +1202,16 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
         // An unchanged reading from an hour ago is not news, but it should not
         // read as though it were taken a moment ago either.
         when.textContent = latest.online === 0 ? "offline since " + fmtTime(latest.t, true)
-          : stale ? "last reported " + fmtTime(latest.t, true)
-          : age > 3600 ? "unchanged since " + fmtTime(latest.t)
+          : stale ? "last reported " + fmtTime(latest.reported || latest.t, true)
+          : quiet > 3600 ? "unchanged since " + fmtTime(latest.reported || latest.t)
           : fmtTime(latest.t);
         chip.appendChild(when);
         chip.title = (dev.label || "Nursery air") +
           (dev.location ? ", " + dev.location : "") + ": " + def.label + " " +
           fmt(v, def.precision) + (def.unit ? " " + def.unit : "") +
-          " at " + fmtTime(latest.t, true) +
+          " read at " + fmtTime(latest.t, true) +
+          (latest.reported && latest.reported < latest.t - 300
+            ? ", unchanged since " + fmtTime(latest.reported, true) : "") +
           (def.band ? ". Expected " + def.band[0] + " to " + def.band[1] +
                       (def.unit ? " " + def.unit : "") + "." : "") +
           " The sensor reports when a value changes rather than on a timer, " +
