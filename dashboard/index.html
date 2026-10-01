@@ -1274,8 +1274,27 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
   function renderOverview() {
     var host = el("overview");
     var devices = (state.data.devices || []).slice();
-    if (!devices.length) { host.hidden = true; return; }
+    // The air sensor is drawn first, and outside the early return below. It is
+    // a different instrument from the sumps, and hiding its readings because
+    // the sump table happens to be empty would be the wrong dependency: on a
+    // database with no Seneye devices yet, the one thing still reporting was
+    // the thing that disappeared.
+    renderAir();
+    // Hide the parts with nothing in them rather than the whole section: the
+    // air sensor is a different instrument from the sumps, and on a database
+    // with no Seneye devices yet the one thing still reporting was the thing
+    // that disappeared.
+    var hasAir = !el("ov-air").hidden;
+    el("ov-banner").hidden = !devices.length;
+    el("ov-key").hidden = !devices.length;
+    el("ov-table").parentNode.hidden = !devices.length;
+    if (!devices.length) {
+      host.hidden = !hasAir;
+      el("overview-h").textContent = "Nursery air";
+      return;
+    }
     host.hidden = false;
+    el("overview-h").textContent = "All nine sumps, right now";
 
     var params = overviewParams();
     var table = el("ov-table");
@@ -1514,7 +1533,6 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
                    " chiller plugs have") + " stopped reporting" });
     }
 
-    renderAir();
     renderOverviewBanner(worst, trouble, devices.length);
     renderOverviewKey();
   }
