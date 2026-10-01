@@ -118,6 +118,11 @@ class AmbientReading:
 
     device_id: str
     reading_time: int
+    # When Tuya last saw one of this sensor's values move. Kept apart from
+    # reading_time for the same reason it is on the plugs: they answer
+    # different questions. reading_time says when we took this reading;
+    # reported_at says how long the sensor has been saying the same thing.
+    reported_at: int | None = None
     air_temperature: float | None = None
     humidity: float | None = None
     battery: float | None = None
@@ -127,6 +132,7 @@ class AmbientReading:
         return {
             "device_id": self.device_id,
             "reading_time": self.reading_time,
+            "reported_at": self.reported_at,
             "air_temperature": self.air_temperature,
             "humidity": self.humidity,
             "battery": self.battery,
@@ -408,11 +414,20 @@ def poll(client: TuyaClient, config: dict[str, Any], now: int | None = None) -> 
         sane = bool(reported and now - 365 * 86400 <= reported <= now + 300)
 
         if kind == "ambient":
-            # A sensor's update_time IS its last measurement, so it is the
-            # reading time. A week of silence means the sensor is the problem,
-            # not the clock.
-            seen = reported if (sane and reported >= now - 7 * 86400) else now
-            contact = seen
+            # This was wrong and the sensor's own history caught it. Using
+            # update_time as the reading time meant every poll that found the
+            # same value carried the same timestamp, the insert deduplicated it
+            # away, and a fortnight of monitoring produced two stored readings.
+            # The air was being measured every half hour and almost all of it
+            # was thrown out.
+            #
+            # A poll is a reading: the air was that temperature when we asked,
+            # whether or not the number had moved since last time. update_time
+            # is kept alongside, where it answers the question it is actually
+            # good for, which is how long the sensor has been saying the same
+            # thing.
+            seen = now
+            contact = reported if (sane and reported <= now + 300) else now
         else:
             # A switch is polled, not pushed: the moment we asked and got an
             # answer is when the reading is from. Its update_time is only
@@ -432,6 +447,7 @@ def poll(client: TuyaClient, config: dict[str, Any], now: int | None = None) -> 
                 AmbientReading(
                     device_id=did,
                     reading_time=seen,
+                    reported_at=contact,
                     air_temperature=values.get("air_temperature"),
                     humidity=values.get("humidity"),
                     battery=values.get("battery"),

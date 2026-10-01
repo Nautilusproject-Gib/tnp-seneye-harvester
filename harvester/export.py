@@ -420,8 +420,15 @@ def _ambient(store, config: dict[str, Any], now: int, window_days: int,
         did = r["device_id"]
         prev = latest.get(did)
         if prev is None or int(r["reading_time"]) > prev["t"]:
+            # `t` is when this reading was taken, and is as fresh as the last
+            # harvest. `reported` is when the sensor last saw one of its values
+            # move, which is older and is the one that says something about the
+            # sensor's health. Collapsing the two made a working sensor look
+            # stale and, worse, threw most of its readings away.
+            reported = _as_int(r.get("reported_at"))
             latest[did] = {
                 "t": int(r["reading_time"]),
+                "reported": reported if reported else int(r["reading_time"]),
                 "values": {k: _round(r.get(k)) for k in keys},
                 "battery": _round(r.get("battery")),
                 "online": _as_int(r.get("online")),

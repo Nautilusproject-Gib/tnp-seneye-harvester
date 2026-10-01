@@ -255,6 +255,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS ambient (
                     device_id {text} NOT NULL,
                     reading_time INTEGER NOT NULL,
+                    reported_at INTEGER,
                     air_temperature {numeric},
                     humidity {numeric},
                     battery {numeric},
@@ -272,6 +273,7 @@ class Store:
             # version keeps its old shape and every later insert fails. Columns
             # added after a table has shipped have to be added explicitly.
             self._add_column(cur, "plug_states", "plug_power_w", numeric)
+            self._add_column(cur, "ambient", "reported_at", "INTEGER")
 
             cur.execute(
                 f"""
@@ -532,14 +534,19 @@ class Store:
         rows = list(rows)
         if not rows:
             return 0
-        columns = ("device_id", "reading_time", "air_temperature", "humidity",
-                   "battery", "online")
+        columns = ("device_id", "reading_time", "reported_at", "air_temperature",
+                   "humidity", "battery", "online")
         cols = ", ".join(columns)
         marks = ", ".join("?" for _ in columns)
         inserted = 0
         with self.cursor() as cur:
             for row in rows:
                 if row.get("air_temperature") is None and row.get("humidity") is None:
+                    continue
+                # A sensor the cloud cannot reach is still reporting its last
+                # value, and writing that every half hour would manufacture a
+                # flat line out of nothing. Its absence is the honest record.
+                if row.get("online") == 0:
                     continue
                 cur.execute(
                     self.sql(
