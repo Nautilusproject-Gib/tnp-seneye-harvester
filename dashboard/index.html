@@ -1176,7 +1176,12 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
         var v = latest.values[def.key];
         if (v === null || v === undefined) return;
         var out = def.band && (v < def.band[0] || v > def.band[1]);
-        var stale = (today() - latest.t) > ((state.data.plugs || {}).stale_after || 5400);
+        // Not the plugs' threshold. A plug answers every poll, so silence
+        // means trouble. This sensor reports only when a value moves, so a
+        // steady room legitimately produces nothing for hours. Whether the
+        // device is reachable at all is what `online` is for.
+        var age = today() - latest.t;
+        var stale = latest.online === 0 || age > (amb.stale_after || 21600);
         var chip = document.createElement("div");
         chip.className = "air-chip" + (stale ? " off" : out ? " out" : "");
         var k = document.createElement("span");
@@ -1188,8 +1193,12 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
         chip.appendChild(b);
         var when = document.createElement("span");
         when.className = "when";
-        when.textContent = stale ? "last seen " + fmtTime(latest.t, true)
-                                 : fmtTime(latest.t);
+        // An unchanged reading from an hour ago is not news, but it should not
+        // read as though it were taken a moment ago either.
+        when.textContent = latest.online === 0 ? "offline since " + fmtTime(latest.t, true)
+          : stale ? "last reported " + fmtTime(latest.t, true)
+          : age > 3600 ? "unchanged since " + fmtTime(latest.t)
+          : fmtTime(latest.t);
         chip.appendChild(when);
         chip.title = (dev.label || "Nursery air") +
           (dev.location ? ", " + dev.location : "") + ": " + def.label + " " +
@@ -1197,7 +1206,12 @@ footer.notes code{font-variant-numeric:tabular-nums;font-size:11.5px;background:
           " at " + fmtTime(latest.t, true) +
           (def.band ? ". Expected " + def.band[0] + " to " + def.band[1] +
                       (def.unit ? " " + def.unit : "") + "." : "") +
-          (stale ? " The sensor has not reported since then." : "");
+          " The sensor reports when a value changes rather than on a timer, " +
+          "so a steady room produces no new readings for a while." +
+          (latest.online === 0
+            ? " It is currently offline, so this is the last value it sent."
+            : stale ? " It has been quiet longer than expected, which is worth a look."
+            : "");
         box.appendChild(chip);
         shown++;
       });
