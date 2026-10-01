@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harvester.export import _daily_stats, _slides, build_payload
 from harvester import plugs
+from tools import swap_device
 from harvester.seneye import parse_reading
 from harvester.store import Store
 
@@ -909,6 +910,12 @@ class FakeTuya:
         self.online = online
         self.update_time = update_time
 
+    def all_devices(self, limit=200):
+        return [{"id": i, "name": i, "product_name": "thing",
+                 "online": self.online, "update_time": self.update_time,
+                 "active_time": None}
+                for i in self.codes]
+
     def status(self, ids):
         return {i: dict(self.codes.get(i, {})) for i in ids if i in self.codes}
 
@@ -1031,11 +1038,164 @@ class TestPlugPolling(unittest.TestCase):
         self.assertEqual(result.sockets, [])
         self.assertEqual(result.ambient, [])
 
+    def test_the_inventory_marks_an_id_config_does_not_know(self):
+        codes = plug_codes()
+        codes["bfNEWsensor"] = {"va_temperature": 210}
+        text = plugs.inventory(FakeTuya(codes), PLUG_CONFIG)
+        self.assertIn("NEW bfNEWsensor", text)
+        self.assertIn("not in config.json", text)
+
+    def test_the_inventory_names_a_configured_id_that_has_vanished(self):
+        codes = plug_codes()
+        codes.pop("airSensor")
+        text = plugs.inventory(FakeTuya(codes), PLUG_CONFIG)
+        self.assertIn("NOT on the account any more", text)
+        self.assertIn("airSensor", text)
+
+    def test_a_previous_id_is_recognised_rather_than_flagged_as_new(self):
+        config = json.loads(json.dumps(PLUG_CONFIG))
+        config["plugs"]["devices"]["airSensor"]["previous_ids"] = ["bfOLDsensor"]
+        codes = plug_codes()
+        codes["bfOLDsensor"] = {"va_temperature": 210}
+        text = plugs.inventory(FakeTuya(codes), config)
+        self.assertIn("previous ID", text)
+        self.assertNotIn("NEW bfOLDsensor", text)
+
     def test_describe_lists_the_switch_codes_to_map(self):
         text = plugs.describe(FakeTuya(plug_codes()), ["plugD"])
         self.assertIn("switch_1", text)
         self.assertIn("switch_2", text)
         self.assertIn("sockets", text)
+
+
+class TestPlugReconcile(unittest.TestCase):
+    """Telling "off the network" apart from "no longer exists"."""
+
+    def reconcile(self, codes, account_ids, raises=False):
+        class Client(FakeTuya):
+            def all_devices(inner, limit=200):
+                if raises:
+                    raise plugs.TuyaError("no")
+                return [{"id": i, "name": i, "product_name": "thing",
+                         "online": True, "update_time": None, "active_time": None}
+                        for i in account_ids]
+        client = Client(codes)
+        return plugs.reconcile(client, PLUG_CONFIG,
+                               plugs.poll(client, PLUG_CONFIG, now=1000))
+
+    def test_nothing_is_fetched_when_every_device_answered(self):
+        # The account listing costs a request, so it is only worth making when
+        # something has actually gone quiet.
+        out = self.reconcile(plug_codes(), [], raises=True)
+        self.assertEqual(out, {"gone": [], "candidates": []})
+
+    def test_a_plug_off_the_network_is_not_reported_as_gone(self):
+        # Rows C and E behave exactly like this: unreachable, but still
+        # registered and still answering with their last known state.
+        codes = plug_codes()
+        codes.pop("plugE")
+        out = self.reconcile(codes, ["plugD", "plugE", "airSensor"])
+        self.assertEqual(out["gone"], [])
+
+    def test_a_reset_device_is_reported_as_gone_with_candidates(self):
+        codes = plug_codes()
+        codes.pop("airSensor")
+        out = self.reconcile(codes, ["plugD", "plugE", "bfNEWsensor"])
+        self.assertEqual(out["gone"], ["airSensor"])
+        self.assertEqual([c["id"] for c in out["candidates"]], ["bfNEWsensor"])
+
+    def test_a_previous_id_is_not_offered_as_a_candidate(self):
+        config = json.loads(json.dumps(PLUG_CONFIG))
+        config["plugs"]["devices"]["airSensor"]["previous_ids"] = ["bfOLD"]
+        codes = plug_codes()
+        codes.pop("plugE")
+
+        class Client(FakeTuya):
+            def all_devices(inner, limit=200):
+                return [{"id": i, "name": i, "product_name": "thing",
+                         "online": True, "update_time": None, "active_time": None}
+                        for i in ("plugD", "plugE", "airSensor", "bfOLD")]
+        client = Client(codes)
+        out = plugs.reconcile(client, config, plugs.poll(client, config, now=1000))
+        self.assertNotIn("bfOLD", [c["id"] for c in out["candidates"]])
+
+    def test_a_listing_that_cannot_be_read_says_so_rather_than_guessing(self):
+        codes = plug_codes()
+        codes.pop("airSensor")
+        out = self.reconcile(codes, [], raises=True)
+        self.assertEqual(out["gone"], [])
+        self.assertEqual(out["unchecked"], ["airSensor"])
+
+
+class TestSwapDevice(unittest.TestCase):
+    def setUp(self):
+        self.config = json.loads(json.dumps(PLUG_CONFIG))
+
+    def test_the_entry_moves_and_the_old_id_is_remembered(self):
+        out = swap_device.swap(self.config, "airSensor", "bfNEW")
+        devices = out["plugs"]["devices"]
+        self.assertNotIn("airSensor", devices)
+        self.assertIn("bfNEW", devices)
+        self.assertEqual(devices["bfNEW"]["previous_ids"], ["airSensor"])
+        self.assertEqual(devices["bfNEW"]["label"], "Nursery air")
+
+    def test_the_order_of_the_other_devices_is_untouched(self):
+        before = [k for k in self.config["plugs"]["devices"]]
+        after = [k for k in swap_device.swap(self.config, "plugD", "bfNEW")
+                 ["plugs"]["devices"]]
+        self.assertEqual(len(before), len(after))
+        self.assertEqual(
+            [k for k in after if k != "bfNEW"],
+            [k for k in before if k != "plugD"])
+
+    def test_a_device_reset_twice_keeps_the_whole_chain(self):
+        once = swap_device.swap(self.config, "airSensor", "bfSECOND")
+        twice = swap_device.swap(once, "bfSECOND", "bfTHIRD")
+        self.assertEqual(twice["plugs"]["devices"]["bfTHIRD"]["previous_ids"],
+                         ["airSensor", "bfSECOND"])
+
+    def test_an_unknown_old_id_is_refused_rather_than_silently_added(self):
+        with self.assertRaises(SystemExit):
+            swap_device.swap(self.config, "neverConfigured", "bfNEW")
+
+    def test_swapping_onto_an_id_already_in_use_is_refused(self):
+        with self.assertRaises(SystemExit):
+            swap_device.swap(self.config, "airSensor", "plugD")
+
+    def test_a_malformed_id_never_reaches_the_config(self):
+        # A typo here would point the harvester at nothing, which is the exact
+        # failure this tool exists to repair.
+        for bad in ("nope", "bad id", "BF79A8D7FBE41CC23CDPXQ", ""):
+            with self.assertRaises(SystemExit):
+                swap_device.main(["--old", "airSensor", "--new", bad])
+
+    def test_an_end_to_end_swap_rewrites_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"plugs": {"devices": {
+                    "bf0dee5c3a68c22ad66baz": {"label": "Nursery air",
+                                               "kind": "ambient"}}}}, fh)
+            swap_device.main(["--old", "bf0dee5c3a68c22ad66baz",
+                              "--new", "bf79a8d7fbe41cc23cdpxq",
+                              "--config", path])
+            with open(path, encoding="utf-8") as fh:
+                after = json.load(fh)
+            entry = after["plugs"]["devices"]["bf79a8d7fbe41cc23cdpxq"]
+            self.assertEqual(entry["previous_ids"], ["bf0dee5c3a68c22ad66baz"])
+
+    def test_a_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.json")
+            payload = {"plugs": {"devices": {
+                "bf0dee5c3a68c22ad66baz": {"label": "Nursery air"}}}}
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+            swap_device.main(["--old", "bf0dee5c3a68c22ad66baz",
+                              "--new", "bf79a8d7fbe41cc23cdpxq",
+                              "--config", path, "--dry-run"])
+            with open(path, encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh), payload)
 
 
 class TestPlugSigning(unittest.TestCase):
@@ -1236,6 +1396,43 @@ class TestPlugExport(unittest.TestCase):
         self.assertIsNone(plugs.subscription_days({}, at))
         self.assertIsNone(
             plugs.subscription_days({"subscription_expires": "not a date"}, at))
+
+    def test_a_reset_sensors_old_readings_stay_on_the_same_chart(self):
+        # Rejoining the sensor to a different Wi-Fi network factory resets it,
+        # and it comes back with a new device ID. Without previous_ids its
+        # months of readings would drop off the chart, as though the nursery
+        # had no air temperature before the day the router changed.
+        store = Store("sqlite:///:memory:")
+        store.migrate()
+        old_rows = [
+            {"device_id": "oldSensor", "reading_time": self.now - 7200,
+             "air_temperature": 21.1, "humidity": 60, "battery": None, "online": 1},
+            {"device_id": "newSensor", "reading_time": self.now - 600,
+             "air_temperature": 22.4, "humidity": 62, "battery": None, "online": 1},
+        ]
+        store.insert_ambient(old_rows)
+
+        config = json.loads(json.dumps(PLUG_CONFIG))
+        devices = config["plugs"]["devices"]
+        devices["newSensor"] = devices.pop("airSensor")
+        devices["newSensor"]["previous_ids"] = ["oldSensor"]
+
+        ambient = build_payload(store, config, 30, 30)["ambient"]
+        self.assertEqual(list(ambient["latest"]), ["newSensor"])
+        self.assertEqual(len(ambient["readings"]), 2)
+        self.assertEqual({r[0] for r in ambient["readings"]}, {"newSensor"})
+
+    def test_readings_from_an_unlisted_device_are_left_out(self):
+        store = Store("sqlite:///:memory:")
+        store.migrate()
+        store.insert_ambient([
+            {"device_id": "airSensor", "reading_time": self.now - 600,
+             "air_temperature": 22.0, "humidity": 60, "battery": None, "online": 1},
+            {"device_id": "someoneElses", "reading_time": self.now - 600,
+             "air_temperature": 30.0, "humidity": 10, "battery": None, "online": 1},
+        ])
+        ambient = build_payload(store, PLUG_CONFIG, 30, 30)["ambient"]
+        self.assertEqual(list(ambient["latest"]), ["airSensor"])
 
     def test_plugs_disabled_exports_nothing_but_the_flag(self):
         payload = build_payload(self.store, {"plugs": {"enabled": False}}, 30, 30)
