@@ -535,6 +535,36 @@ how to check the air sensor's scaling. Tuya send scaled integers, so 213 means
 21.3 °C; if humidity comes back as 655 rather than 65, set its scale to 10 in
 `config.json > plugs > devices > <id> > scales`.
 
+### When a device is reset
+
+A Tuya device that is factory reset comes back with a brand new device ID, and
+joining one to a different Wi-Fi network is enough to do it. The ID in
+`config.json` then points at nothing, the harvester asks about a device that no
+longer exists, and the readings stop without any error.
+
+**The harvest notices.** Every run that finds a device silent checks it against
+the account's own device list, and the two cases are easy to tell apart once
+you look: a plug merely off the network is still registered and still answers
+with its last known state, as Rows C and E do, while a device that has been
+reset returns nothing and is absent from the listing. Only the second needs a
+new ID. The run log names it, lists the IDs on the account that `config.json`
+does not know about, and says which workflow fixes it. Nothing has to be
+spotted by eye.
+
+**Fixing it takes one workflow.** Actions → **Replace a device ID**, paste the
+old and the new, leave dry run ticked the first time. It rewrites `config.json`
+and commits, so nobody edits JSON by hand. With **check** ticked it first asks
+Tuya whether the new ID really is on the account and the old one really is not,
+and refuses the swap if either is wrong.
+
+To find the new ID: Actions → **Probe smart plugs** with **list every device**
+ticked, or iot.tuya.com → Cloud → Development → your project → Devices.
+
+The old ID is recorded under the device's `previous_ids`, which is what keeps
+the readings from before the reset on the same chart rather than starting the
+record again from the day the router changed. A device reset more than once
+keeps the whole chain.
+
 ### The subscription
 
 Tuya put cloud access behind an IoT Core subscription that has to be renewed.
